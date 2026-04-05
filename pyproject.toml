@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "waid"
+version = "0.2.0"
+description = "GNOME-first desktop activity tracker with managed CLI, service install, and LLM classification."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "PyYAML>=6.0.1",
+  "pydantic>=2.7.0",
+  "dbus-next>=0.2.3",
+  "prompt_toolkit>=3.0.52",
+]
+
+[project.scripts]
+waid = "what_am_i_doing.__main__:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+what_am_i_doing = [
+  "resources/gnome/*",
+  "resources/systemd/*",
+]

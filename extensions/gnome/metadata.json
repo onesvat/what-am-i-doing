@@ -1,0 +1,7 @@
+{
+  "uuid": "waid@gnome",
+  "name": "waid",
+  "description": "Expose GNOME desktop state over D-Bus and show current waid activity status.",
+  "shell-version": ["45", "46", "47"],
+  "version": 2
+}

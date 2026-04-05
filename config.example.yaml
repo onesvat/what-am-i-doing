@@ -1,0 +1,46 @@
+version: 1
+
+model:
+  base_url: http://localhost:11434/v1
+  name: gemma3:4b
+  api_key_env: OPENAI_API_KEY
+  timeout_seconds: 30
+  temperature: 0.0
+
+generator:
+  interval_minutes: 5
+  retry_count: 1
+  categories:
+    - name: coding
+    - name: messaging
+      note: email, chat, meetings
+    - name: planning
+    - name: surfing
+  instructions: |
+    Prefer matching today's planned tasks when possible.
+    Today's tasks:
+    ${sp_today_tasks}
+
+classifier:
+  retry_count: 2
+  instructions: |
+    Prefer the most specific category.
+    Use unknown when unclear.
+  params:
+    work_mode: focused
+
+tools:
+  context:
+    sp_today_tasks:
+      run: ["sp", "list", "today"]
+      timeout_seconds: 10
+  actions:
+    sp_switch:
+      run: ["sp", "switch"]
+      timeout_seconds: 10
+    ha:
+      run: ["ha"]
+      timeout_seconds: 10
+    telegram:
+      run: ["telegram-send"]
+      timeout_seconds: 10
