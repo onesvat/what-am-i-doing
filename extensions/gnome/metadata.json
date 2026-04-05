@@ -1,7 +1,7 @@
 {
-  "uuid": "waid@gnome",
+  "uuid": "waid@onesvat.github.io",
   "name": "waid",
   "description": "Expose GNOME desktop state over D-Bus and show current waid activity status.",
-  "shell-version": ["45", "46", "47"],
-  "version": 2
+  "shell-version": ["46"],
+  "url": "https://github.com/onesvat/what-am-i-doing"
 }

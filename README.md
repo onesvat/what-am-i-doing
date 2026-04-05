@@ -33,6 +33,7 @@ Using `uv`:
 ```bash
 uv venv .venv --python 3.12
 uv pip install --python .venv/bin/python -e .
+source .venv/bin/activate
 ```
 
 Or with plain `pip`:
@@ -40,6 +41,13 @@ Or with plain `pip`:
 ```bash
 python3.12 -m venv .venv
 .venv/bin/pip install -e .
+source .venv/bin/activate
+```
+
+If you do not want to activate the environment, use the binary directly:
+
+```bash
+.venv/bin/waid init
 ```
 
 ### 2. Create your config
@@ -48,6 +56,12 @@ Run:
 
 ```bash
 waid init
+```
+
+If you skipped activation, run:
+
+```bash
+.venv/bin/waid init
 ```
 
 The setup wizard will ask for:
@@ -71,10 +85,12 @@ If you want to start from a file instead, copy [config.example.yaml](/home/onur/
 
 ```bash
 waid extension install
-gnome-extensions enable waid@gnome
+gnome-extensions enable waid@onesvat.github.io
 ```
 
-If you do not see the top bar item, restart GNOME Shell or log out and back in.
+If `gnome-extensions enable waid@onesvat.github.io` says the extension does not exist yet, log out and back in first, then run the command again.
+
+If you do not see the top bar item after enabling, restart GNOME Shell or log out and back in.
 
 ### 4. Install the service
 

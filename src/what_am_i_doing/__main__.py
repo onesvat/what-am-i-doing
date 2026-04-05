@@ -18,7 +18,14 @@ from .config import (
     load_config,
     render_config,
 )
-from .constants import CONFIG_DIR, CONFIG_PATH, EXTENSION_DIR, EXTENSION_UUID, SERVICE_NAME
+from .constants import (
+    CONFIG_DIR,
+    CONFIG_PATH,
+    EXTENSION_DIR,
+    EXTENSION_UUID,
+    LEGACY_EXTENSION_UUIDS,
+    SERVICE_NAME,
+)
 from .daemon import ActivityDaemon
 from .dbus_service import daemon_refresh_taxonomy, daemon_status_json
 from .models import AppPaths
@@ -203,9 +210,14 @@ def _run_config_command(args: argparse.Namespace) -> None:
 
 def _run_extension_command(args: argparse.Namespace) -> None:
     if args.extension_command == "install":
+        for legacy_uuid in LEGACY_EXTENSION_UUIDS:
+            legacy_dir = EXTENSION_DIR.parent / legacy_uuid
+            if legacy_dir.exists():
+                shutil.rmtree(legacy_dir)
         copy_resource_tree("gnome", destination=EXTENSION_DIR)
         print(f"installed extension to {EXTENSION_DIR}")
         print(f"enable with: gnome-extensions enable {EXTENSION_UUID}")
+        print("if GNOME says the extension does not exist yet, log out and back in first, then run the enable command again")
         return
     if args.extension_command == "status":
         print(f"extension dir: {EXTENSION_DIR}")

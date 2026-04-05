@@ -86,7 +86,7 @@ The expected first-time flow is:
 
 1. `waid init`
 2. `waid extension install`
-3. `gnome-extensions enable waid@gnome`
+3. `gnome-extensions enable waid@onesvat.github.io`
 4. `waid service install --now`
 
 Do not make this flow harder without a good reason.

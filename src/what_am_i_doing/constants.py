@@ -9,7 +9,8 @@ CONFIG_PATH = CONFIG_DIR / "config.yaml"
 STATE_DIR = Path.home() / ".local" / "state" / APP_NAME
 SYSTEMD_USER_DIR = Path.home() / ".config" / "systemd" / "user"
 SERVICE_NAME = f"{APP_NAME}.service"
-EXTENSION_UUID = f"{APP_NAME}@gnome"
+EXTENSION_UUID = f"{APP_NAME}@onesvat.github.io"
+LEGACY_EXTENSION_UUIDS = ("waid@gnome",)
 EXTENSION_DIR = Path.home() / ".local" / "share" / "gnome-shell" / "extensions" / EXTENSION_UUID
 
 TRACKER_BUS_NAME = "org.waid.WindowTracker"

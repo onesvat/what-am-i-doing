@@ -24,25 +24,10 @@ const TRACKER_IFACE = `
   </interface>
 </node>`;
 
-const DAEMON_IFACE = `
-<node>
-  <interface name="org.waid.Daemon">
-    <method name="GetStatus">
-      <arg name="status_json" type="s" direction="out"/>
-    </method>
-    <method name="RefreshTaxonomy">
-      <arg name="ok" type="b" direction="out"/>
-    </method>
-    <signal name="StatusChanged">
-      <arg name="status_json" type="s"/>
-    </signal>
-  </interface>
-</node>`;
-
 const StatusIndicator = GObject.registerClass(
 class StatusIndicator extends PanelMenu.Button {
     _init() {
-        super._init(0.0, 'waid');
+        super._init(0.0, 'waid', false);
         this._box = new St.BoxLayout({style_class: 'panel-status-menu-box'});
         this._icon = new St.Icon({icon_name: 'help-about-symbolic', style_class: 'system-status-icon'});
         this._label = new St.Label({text: 'unknown', y_align: Clutter.ActorAlign.CENTER});
@@ -80,7 +65,7 @@ export default class WaidExtension extends Extension {
 
         this._indicator = new StatusIndicator();
         this._indicator.onRefresh(() => this._requestRefresh());
-        Main.panel.addToStatusArea('waid', this._indicator);
+        Main.panel.addToStatusArea(this.uuid, this._indicator);
 
         this._signals.push([global.display, global.display.connect('notify::focus-window', () => this._emitStateChanged())]);
         this._signals.push([global.workspace_manager, global.workspace_manager.connect('active-workspace-changed', () => this._emitStateChanged())]);
@@ -141,17 +126,23 @@ export default class WaidExtension extends Extension {
     _windowToJson(win) {
         const rect = win.get_frame_rect();
         const workspace = win.get_workspace();
+        const workspaceName = workspace && typeof workspace.get_name === 'function'
+            ? workspace.get_name()
+            : null;
+        const maximized = typeof win.is_maximized === 'function'
+            ? win.is_maximized()
+            : win.get_maximized() !== Meta.MaximizeFlags.NONE;
         return {
             title: win.get_title() || '',
             wm_class: win.get_wm_class() || '',
             wm_class_instance: win.get_wm_class_instance() || '',
             pid: win.get_pid(),
             workspace: workspace ? workspace.index() : null,
-            workspace_name: workspace ? workspace.get_name() : null,
+            workspace_name: workspaceName,
             monitor: `${win.get_monitor()}`,
             monitor_index: win.get_monitor(),
             fullscreen: win.is_fullscreen(),
-            maximized: win.get_maximized() !== Meta.MaximizeFlags.NONE,
+            maximized,
             geometry: {
                 x: rect.x,
                 y: rect.y,
