@@ -1,43 +1,32 @@
 # waid
 
-`waid` watches your GNOME desktop, decides what kind of work you are doing, and runs your own commands when that activity changes.
+`waid` helps your GNOME desktop understand what you are doing right now.
 
-Examples:
+It watches your active window, picks a category like `coding` or `planning`, and can run your own commands when that category changes.
 
-- switch a Super Productivity task when you move into a project
-- update Home Assistant with `coding`, `messaging`, or `surfing`
-- alert yourself when browsing matches a category you want to avoid
-- show the current top-level status in the GNOME panel
+## Why Use It? 🙂
 
-The goal is simple: install it once, keep the config small, and manage it like a normal desktop service.
+With `waid`, you can:
 
-## What Changed
-
-This project now uses a simpler product shape:
-
-- the command is `waid`
-- config lives at `~/.config/waid/config.yaml`
-- state lives at `~/.local/state/waid/`
-- GNOME extension id is `waid@gnome`
-- service name is `waid.service`
-
-Most low-level settings are not exposed in the main config anymore.
+- switch your current Super Productivity task automatically
+- update Home Assistant with your current work mode
+- show your current status in the GNOME top bar
+- keep lightweight logs of what you worked on during the day
+- build your own automations without hardcoding rules in Python
 
 ## How It Works
 
-`waid` has three moving parts:
+`waid` has three simple pieces:
 
-1. The GNOME extension tells `waid` which window is focused.
-2. A generator model builds a runtime category tree from your broad categories and your context commands.
-3. A classifier model picks the best category path for each window change.
+1. 🖥️ A GNOME extension tells `waid` which window is focused.
+2. 🧠 A generator model builds a small category tree from your config and context commands.
+3. ⚡ A classifier model picks the best category for each window change.
 
-When the selected category changes, `waid` runs the predeclared action commands attached to that category.
+When the category changes, `waid` runs the action commands attached to that category.
 
-The classifier does not run tools. It only chooses from the generated category list.
+## Quick Start
 
-## Install
-
-### 1. Create an environment
+### 1. Install it
 
 Using `uv`:
 
@@ -61,24 +50,22 @@ Run:
 waid init
 ```
 
-The init wizard asks for:
+The setup wizard will ask for:
 
-- model base URL
-- model name
-- API key env var name
-- broad categories
-- optional notes for those categories
-- context commands
-- action commands
+- your LLM endpoint
+- your model name
+- broad categories you care about
+- context commands like `sp list today`
+- action commands like `sp switch` or `ha`
 - short extra instructions
 
-When it finishes, it writes:
+Your config will be written to:
 
 ```text
 ~/.config/waid/config.yaml
 ```
 
-If you prefer manual editing, copy [config.example.yaml](/home/onur/.openclaw/workspace-coding/code/what-am-i-doing/config.example.yaml).
+If you want to start from a file instead, copy [config.example.yaml](/home/onur/.openclaw/workspace-coding/code/what-am-i-doing/config.example.yaml).
 
 ### 3. Install the GNOME extension
 
@@ -87,37 +74,40 @@ waid extension install
 gnome-extensions enable waid@gnome
 ```
 
-If the panel item does not appear, restart GNOME Shell or log out and back in.
+If you do not see the top bar item, restart GNOME Shell or log out and back in.
 
-### 4. Install and start the user service
+### 4. Install the service
 
 ```bash
 waid service install --now
 ```
 
-Useful service commands:
+That makes `waid` run as a user service in the background.
 
-```bash
-waid service status
-waid service restart
-waid service stop
-waid service logs
-```
+## Daily Commands
 
-## Everyday Commands
+These are the commands you will actually use most of the time:
 
 ```bash
 waid status
 waid refresh
 waid stats
 waid doctor
+waid service status
+waid service logs
+```
+
+Useful config helpers:
+
+```bash
+waid config path
 waid config validate
 waid extension status
 ```
 
-## The Config Format
+## The Config, Explained Simply
 
-The config is intentionally small.
+The config is small on purpose.
 
 ```yaml
 version: 1
@@ -173,74 +163,40 @@ tools:
 This is the shared model config for both generator and classifier.
 
 - `base_url`: your OpenAI-compatible endpoint
-- `name`: model id at that endpoint
-- `api_key_env`: environment variable to read the API key from
-- `timeout_seconds`: HTTP timeout
+- `name`: model id
+- `api_key_env`: env var used for the API key
+- `timeout_seconds`: request timeout
 - `temperature`: model temperature
 
 ### `generator`
 
-This controls the slower refresh loop that builds the runtime taxonomy.
+This is the slower loop.
 
-- `interval_minutes`: how often context commands are refreshed
-- `retry_count`: retries before keeping the last good taxonomy
-- `categories`: broad names you care about
-- `instructions`: extra prompt text for generation
+It:
 
-`unknown` is added automatically. You do not need to define it.
+- reads your broad categories
+- runs context commands
+- builds a runtime category tree
+
+`unknown` is added automatically, so you do not need to define it.
 
 ### `classifier`
 
-This controls the fast per-window decision loop.
+This is the fast loop that runs on window changes.
 
-- `retry_count`: how many times to retry invalid category output
-- `instructions`: extra prompt text for classification
-- `params`: simple variables for `${name}` substitution inside `instructions`
+It:
+
+- receives the current desktop event
+- sees the generated category list
+- returns one allowed category path
+
+It does not run tools directly.
 
 ### `tools.context`
 
-These commands run on the generator refresh interval. Their output becomes prompt text for generation.
-
-If a context tool is named `sp_today_tasks`, you can use it inside generator instructions as:
-
-```text
-${sp_today_tasks}
-```
-
-### `tools.actions`
-
-These are the only commands the generated taxonomy is allowed to call.
-
-They are referenced by name from the generated category JSON.
+These commands give extra daily context to the generator.
 
 Example:
-
-- action tool name: `sp_switch`
-- configured command: `["sp", "switch"]`
-- generated call: `{"tool":"sp_switch","args":["123"]}`
-
-That becomes:
-
-```bash
-sp switch 123
-```
-
-## Conventions
-
-These conventions matter because the models depend on them.
-
-- Tool names should look like identifiers: `sp_switch`, `ha`, `telegram`
-- Context tool names are also variable names inside generator instructions
-- Commands are argv arrays, not shell strings
-- Category names cannot contain `/`
-- Top-level categories should stay broad
-- Child categories are generated at runtime and should be specific enough to trigger useful actions
-
-## Common Use Cases
-
-### Super Productivity
-
-Context tool:
 
 ```yaml
 tools:
@@ -249,7 +205,17 @@ tools:
       run: ["sp", "list", "today"]
 ```
 
-Action tool:
+Then you can use the output inside `generator.instructions` like this:
+
+```text
+${sp_today_tasks}
+```
+
+### `tools.actions`
+
+These are the only commands `waid` is allowed to execute as actions.
+
+Example:
 
 ```yaml
 tools:
@@ -258,24 +224,50 @@ tools:
       run: ["sp", "switch"]
 ```
 
-Generator instruction:
+If the generated taxonomy returns:
+
+```json
+{"tool":"sp_switch","args":["123"]}
+```
+
+`waid` will run:
+
+```bash
+sp switch 123
+```
+
+## Common Setups
+
+### ✅ Super Productivity
+
+Use a context tool for today's tasks:
+
+```yaml
+tools:
+  context:
+    sp_today_tasks:
+      run: ["sp", "list", "today"]
+```
+
+Use an action tool for switching:
+
+```yaml
+tools:
+  actions:
+    sp_switch:
+      run: ["sp", "switch"]
+```
+
+Then guide the generator with something like:
 
 ```text
 Today's tasks:
 ${sp_today_tasks}
 
-When useful, create child categories that map clearly to those tasks.
+Create useful child categories when they clearly match these tasks.
 ```
 
-Expected result:
-
-- generator creates child categories for today’s work
-- classifier picks one of them on focus changes
-- `waid` runs `sp switch <task_id>` when the path changes
-
-### Home Assistant status
-
-Action tool:
+### ✅ Home Assistant
 
 ```yaml
 tools:
@@ -284,21 +276,19 @@ tools:
       run: ["ha"]
 ```
 
-The generator can attach calls like:
+Then generated categories can trigger:
 
 ```json
 {"tool":"ha","args":["coding"]}
 ```
 
-So when the selected category becomes `coding`, `waid` runs:
+Which becomes:
 
 ```bash
 ha coding
 ```
 
-### Telegram notifications
-
-Action tool:
+### ✅ Telegram Notifications
 
 ```yaml
 tools:
@@ -307,30 +297,48 @@ tools:
       run: ["telegram-send"]
 ```
 
-You can attach Telegram notifications to any generated category path you care about. For example, you might notify yourself when `waid` switches into a distraction-related browsing category or when a planning session starts.
+You can attach Telegram notifications to any generated category you want.
 
-## Files Written By waid
+Examples:
 
-Under `~/.local/state/waid/`:
+- notify when you enter a distraction-related browsing category
+- notify when a planning session starts
+- notify when a work session moves into a specific project
 
-- `raw-events.jsonl`: every raw GNOME state change
-- `activity.jsonl`: interpreted category changes
-- `taxonomy.json`: last good generated taxonomy
-- `status.json`: current category path
-- `spans.jsonl`: duration spans for stats
+## Files `waid` Writes
+
+Inside `~/.local/state/waid/`:
+
+- `raw-events.jsonl` → every raw GNOME event
+- `activity.jsonl` → category changes
+- `taxonomy.json` → last good generated taxonomy
+- `status.json` → current selected path
+- `spans.jsonl` → duration spans used by stats
+
+## Conventions
+
+These are worth knowing:
+
+- tool names should look like `sp_switch` or `ha`
+- commands must be argv arrays, not shell strings
+- category names cannot contain `/`
+- top-level categories should stay broad
+- child categories should be useful enough to trigger real actions
 
 ## Troubleshooting
 
-### `waid status` shows `source: state-file`
+### `waid status` says `source: state-file`
 
-The daemon D-Bus service is not reachable. Check:
+That usually means the daemon is not reachable over D-Bus.
+
+Check:
 
 ```bash
 waid service status
 waid service logs
 ```
 
-### The extension is installed but the panel item does not update
+### The GNOME top bar item is missing
 
 Check:
 
@@ -341,26 +349,30 @@ waid doctor
 
 Then restart GNOME Shell or log out and back in.
 
-### A tool command never runs
+### A command never runs
 
 Check:
 
-- the tool binary exists in `PATH`
-- the tool name in generated taxonomy matches a configured `tools.actions` entry
-- the command works manually in your user session
+- the command exists in `PATH`
+- the tool name used by the taxonomy exists in `tools.actions`
+- the command works manually in your terminal
 
-### The model keeps returning invalid categories
+### The model keeps choosing invalid categories
 
-Make classifier instructions shorter and stricter. The classifier only needs to return one allowed path exactly.
+Make the classifier instructions shorter and stricter.
+
+Good rule:
+
+- return only one path
+- prefer `unknown` when unsure
 
 ## Current Limits
 
 - GNOME only
 - one shared model block for generator and classifier
-- classifier runs no tools
-- the init wizard is interactive and terminal-based
-- extension install is handled by CLI, but enabling the extension is still a separate GNOME command
+- classifier does not run tools
+- extension install is handled by CLI, but GNOME enabling is still a separate command
 
-## Developer Notes
+## Developer Note
 
-The package still uses the Python module name `what_am_i_doing`, but the user-facing product name and CLI are `waid`.
+The user-facing product is called `waid`, but the Python package name is still `what_am_i_doing`.
