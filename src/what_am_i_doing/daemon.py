@@ -21,7 +21,6 @@ from .generator import TaxonomyGenerator
 from .llm import OpenAICompatibleClient
 from .models import (
     AppPaths,
-    CorrectionRecord,
     PanelStateRecord,
     ProviderSnapshot,
     SpanRecord,
@@ -34,7 +33,6 @@ from .storage import (
     ensure_state_dir,
     load_status,
     load_taxonomy,
-    save_correction,
     save_span,
     save_status,
     save_taxonomy,
@@ -65,7 +63,7 @@ class ActivityDaemon:
         self.runtime = self._load_runtime_state()
         self._refresh_lock = asyncio.Lock()
         self.dbus_service = DaemonDBusService(
-            self.refresh_taxonomy, self.manual_classify, self.runtime.panel_state
+            self.refresh_taxonomy, self.runtime.panel_state
         )
 
     def _load_runtime_state(self) -> RuntimeState:
@@ -90,35 +88,6 @@ class ActivityDaemon:
             last_classified_started_at=last_classified_started_at,
             last_snapshot=None,
         )
-
-    async def manual_classify(self, path: str) -> None:
-        if path not in self.runtime.taxonomy.allowed_paths():
-            self.debug.log("manual_classify_invalid_path", path=path)
-            return
-
-        snapshot = self.runtime.last_snapshot
-        if snapshot is None:
-            self.debug.log("manual_classify_no_snapshot")
-            return
-
-        now = utcnow()
-        previous_path = self._current_selection()
-
-        correction = CorrectionRecord(
-            timestamp=now,
-            state=snapshot.state,
-            previous_path=previous_path,
-            manual_path=path,
-            taxonomy_hash=self.runtime.taxonomy_hash,
-        )
-        save_correction(self.paths.corrections_log, correction)
-
-        # Update cache so future similar windows use this path
-        cache_key = self._decision_key(snapshot, previous_path)
-        self.decision_cache[cache_key] = path
-
-        await self._publish_classified(path, snapshot.state)
-        self.debug.log("manual_classify_success", path=path, cache_key=cache_key)
 
     async def refresh_taxonomy(self) -> None:
         async with self._refresh_lock:

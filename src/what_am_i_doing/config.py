@@ -15,6 +15,37 @@ from .models import Taxonomy, TaxonomyNode
 IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
+class WindowExample(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    wm_class: str = ""
+    title: str = ""
+    app_id: str | None = None
+    workspace_name: str | None = None
+
+
+class LearnedRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    hint: str
+    target: str
+    window_example: WindowExample | None = None
+
+    @field_validator("target")
+    @classmethod
+    def validate_target(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("target cannot be empty")
+        if value.startswith("/") or value.endswith("/"):
+            raise ValueError("target cannot start or end with '/'")
+        parts = value.split("/")
+        for part in parts:
+            if not part:
+                raise ValueError("target path parts cannot be empty")
+        return value
+
+
 class ModelConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -91,7 +122,6 @@ class ClassifierConfig(BaseModel):
     retry_count: int = 2
     instructions: str = ""
     params: dict[str, str] = Field(default_factory=dict)
-    correction_retention_days: int = 7
     model: ModelConfig | None = None
 
     @field_validator("params")
@@ -113,6 +143,7 @@ class AppConfig(BaseModel):
     generator: GeneratorConfig
     classifier: ClassifierConfig
     tools: ToolRegistry = Field(default_factory=ToolRegistry)
+    learned: list[LearnedRule] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_version_and_categories(self) -> "AppConfig":
@@ -239,6 +270,22 @@ def interpolate_text(text: str, variables: dict[str, str]) -> str:
     template = Template(text)
     safe_mapping = {key: value for key, value in variables.items()}
     return template.safe_substitute(safe_mapping)
+
+
+def parse_target_from_hint(hint: str) -> str:
+    hint = hint.strip()
+    match = re.search(
+        r"should be\s+([A-Za-z0-9_]+(?:/[A-Za-z0-9_]+)*)", hint, re.IGNORECASE
+    )
+    if not match:
+        raise ValueError("hint must contain 'should be <path>' pattern")
+    return match.group(1)
+
+
+def save_config(path: str | Path, config: AppConfig) -> None:
+    config_path = Path(path).expanduser()
+    yaml_content = render_config(config)
+    config_path.write_text(yaml_content, encoding="utf-8")
 
 
 def render_config(config: AppConfig) -> str:

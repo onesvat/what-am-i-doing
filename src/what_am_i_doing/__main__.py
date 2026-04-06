@@ -17,8 +17,12 @@ from dbus_next.errors import DBusError
 from .config import (
     build_minimal_config,
     default_config_path,
+    LearnedRule,
     load_config,
+    parse_target_from_hint,
     render_config,
+    save_config,
+    WindowExample,
 )
 from .constants import (
     CONFIG_DIR,
@@ -50,6 +54,15 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser = subparsers.add_parser("init")
     init_parser.add_argument(
         "--force", action="store_true", help="Overwrite existing config"
+    )
+
+    learn_parser = subparsers.add_parser("learn")
+    learn_parser.add_argument(
+        "hint",
+        help="Natural language hint with target path (e.g., 'opencode window should be coding/other')",
+    )
+    learn_parser.add_argument(
+        "--skip-window", action="store_true", help="Skip window example selection"
     )
 
     subparsers.add_parser("run")
@@ -429,10 +442,84 @@ def _print_debug_entry(entry: dict[str, Any], *, json_output: bool) -> None:
     print(format_debug_entry(entry))
 
 
+def _run_learn(config_path: str, hint: str, *, skip_window: bool) -> None:
+    target = parse_target_from_hint(hint)
+    window_example: WindowExample | None = None
+
+    if not skip_window:
+        paths = AppPaths.default()
+        if paths.raw_events_log.exists():
+            entries = load_raw_events_for_window_selection(paths.raw_events_log)
+            if entries:
+                print("Recent windows (select one to attach metadata, or skip):")
+                for i, entry in enumerate(entries[:10], start=1):
+                    title = entry.get("title", "")
+                    wm_class = entry.get("wm_class", "")
+                    workspace = entry.get("workspace_name", "") or entry.get(
+                        "active_workspace_name", ""
+                    )
+                    print(f"  {i}. [{wm_class}] {title[:50]} ({workspace})")
+
+                try:
+                    selection = (
+                        input("Select window (1-10) or 's' to skip: ").strip().lower()
+                    )
+                    if selection != "s" and selection.isdigit():
+                        idx = int(selection) - 1
+                        if 0 <= idx < len(entries[:10]):
+                            selected = entries[idx]
+                            window_example = WindowExample(
+                                wm_class=selected.get("wm_class", ""),
+                                title=selected.get("title", ""),
+                                app_id=selected.get("app_id"),
+                                workspace_name=selected.get("workspace_name")
+                                or selected.get("active_workspace_name"),
+                            )
+                except (EOFError, KeyboardInterrupt):
+                    print("\nskipped window selection")
+
+    rule = LearnedRule(hint=hint, target=target, window_example=window_example)
+    config = load_config(config_path)
+    config.learned.append(rule)
+    save_config(config_path, config)
+
+    print(f"added learned rule: {hint}")
+    print(f"  target: {target}")
+    if window_example:
+        print(f"  window: [{window_example.wm_class}] {window_example.title[:40]}")
+    print(f"config updated: {Path(config_path).expanduser()}")
+    print("run 'waid refresh' to regenerate taxonomy")
+
+
+def load_raw_events_for_window_selection(path: Path) -> list[dict[str, Any]]:
+    import json
+
+    entries: list[dict[str, Any]] = []
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    if entry.get("event") == "window_change":
+                        entries.append(entry)
+                except json.JSONDecodeError:
+                    continue
+        entries.reverse()
+        return entries
+    except FileNotFoundError:
+        return []
+
+
 def main() -> None:
     args = build_parser().parse_args()
     if args.command == "init":
         _run_init(args.config, force=args.force)
+        return
+    if args.command == "learn":
+        _run_learn(args.config, args.hint, skip_window=args.skip_window)
         return
     if args.command == "run":
         asyncio.run(_run_daemon(args.config))

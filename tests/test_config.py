@@ -11,7 +11,14 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from what_am_i_doing.config import AppConfig, interpolate_text, load_config
+from what_am_i_doing.config import (
+    AppConfig,
+    LearnedRule,
+    WindowExample,
+    interpolate_text,
+    load_config,
+    parse_target_from_hint,
+)
 from what_am_i_doing.models import Taxonomy, TaxonomyNode
 
 
@@ -219,6 +226,89 @@ class ConfigTest(unittest.TestCase):
             c for c in normalized.categories[0].children if c.name == "other"
         )
         self.assertEqual(["sp_stop"], [c.tool for c in other_child.tool_calls])
+
+    def test_config_accepts_empty_learned_section(self) -> None:
+        config = AppConfig.model_validate(
+            {
+                "version": 1,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "generator": {"categories": [{"name": "coding"}], "instructions": ""},
+                "classifier": {"instructions": ""},
+                "learned": [],
+            }
+        )
+        self.assertEqual([], config.learned)
+
+    def test_config_accepts_learned_rules_with_hint_and_target(self) -> None:
+        config = AppConfig.model_validate(
+            {
+                "version": 1,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "generator": {"categories": [{"name": "coding"}], "instructions": ""},
+                "classifier": {"instructions": ""},
+                "learned": [
+                    {
+                        "hint": "opencode window should be coding/other",
+                        "target": "coding/other",
+                    }
+                ],
+            }
+        )
+        self.assertEqual(1, len(config.learned))
+        self.assertEqual(
+            "opencode window should be coding/other", config.learned[0].hint
+        )
+        self.assertEqual("coding/other", config.learned[0].target)
+
+    def test_learned_rule_can_have_window_example(self) -> None:
+        rule = LearnedRule.model_validate(
+            {
+                "hint": "opencode window should be coding/other",
+                "target": "coding/other",
+                "window_example": {
+                    "wm_class": "opencode",
+                    "title": "",
+                    "app_id": "opencode",
+                    "workspace_name": "code",
+                },
+            }
+        )
+        self.assertIsNotNone(rule.window_example)
+        self.assertEqual("opencode", rule.window_example.wm_class)
+        self.assertEqual("", rule.window_example.title)
+
+    def test_learned_rule_target_must_be_valid_path_format(self) -> None:
+        with self.assertRaises(Exception):
+            LearnedRule.model_validate(
+                {
+                    "hint": "test",
+                    "target": "",
+                }
+            )
+        with self.assertRaises(Exception):
+            LearnedRule.model_validate(
+                {
+                    "hint": "test",
+                    "target": "coding/",
+                }
+            )
+        with self.assertRaises(Exception):
+            LearnedRule.model_validate(
+                {
+                    "hint": "test",
+                    "target": "/other",
+                }
+            )
+
+    def test_parse_target_from_hint_extracts_path(self) -> None:
+        target = parse_target_from_hint(
+            "opencode window without anything should be coding/other"
+        )
+        self.assertEqual("coding/other", target)
+
+    def test_parse_target_from_hint_raises_on_invalid_format(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_target_from_hint("opencode window is cool")
 
 
 if __name__ == "__main__":

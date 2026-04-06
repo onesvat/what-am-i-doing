@@ -278,16 +278,6 @@ class SpanRecord(BaseModel):
     duration_seconds: float
 
 
-class CorrectionRecord(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    timestamp: datetime
-    state: ProviderState
-    previous_path: str | None
-    manual_path: str
-    taxonomy_hash: str | None
-
-
 @dataclass(slots=True)
 class AppPaths:
     state_dir: Path
@@ -297,7 +287,6 @@ class AppPaths:
     taxonomy_json: Path
     status_json: Path
     spans_log: Path
-    corrections_log: Path
 
     @classmethod
     def default(cls) -> "AppPaths":
@@ -313,7 +302,6 @@ class AppPaths:
             taxonomy_json=state_dir / "taxonomy.json",
             status_json=state_dir / "status.json",
             spans_log=state_dir / "spans.jsonl",
-            corrections_log=state_dir / "corrections.jsonl",
         )
 
 

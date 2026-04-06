@@ -21,12 +21,10 @@ class DaemonInterface(ServiceInterface):
     def __init__(
         self,
         refresh_callback: Callable[[], Awaitable[None]],
-        manual_classify_callback: Callable[[str], Awaitable[None]],
         initial_panel_state: PanelStateRecord,
     ) -> None:
         super().__init__(DAEMON_INTERFACE)
         self._refresh_callback = refresh_callback
-        self._manual_classify_callback = manual_classify_callback
         self._panel_state = initial_panel_state
         self._panel_state_json = initial_panel_state.payload_json()
         self._legacy_status_json = self._build_legacy_status_json(initial_panel_state)
@@ -75,11 +73,6 @@ class DaemonInterface(ServiceInterface):
     @method()
     async def RefreshTaxonomy(self) -> "b":
         await self._refresh_callback()
-        return True
-
-    @method()
-    async def ManualClassify(self, path: "s") -> "b":
-        await self._manual_classify_callback(path)
         return True
 
     @signal()
@@ -141,15 +134,11 @@ class DaemonDBusService:
     def __init__(
         self,
         refresh_callback: Callable[[], Awaitable[None]],
-        manual_classify_callback: Callable[[str], Awaitable[None]],
         initial_panel_state: PanelStateRecord,
     ) -> None:
         self._refresh_callback = refresh_callback
-        self._manual_classify_callback = manual_classify_callback
         self._bus: MessageBus | None = None
-        self.interface = DaemonInterface(
-            refresh_callback, manual_classify_callback, initial_panel_state
-        )
+        self.interface = DaemonInterface(refresh_callback, initial_panel_state)
 
     async def start(self) -> None:
         self._bus = await MessageBus(bus_type=BusType.SESSION).connect()

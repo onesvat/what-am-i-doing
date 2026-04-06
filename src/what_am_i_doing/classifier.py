@@ -5,8 +5,7 @@ from .constants import PANEL_KIND_UNCLASSIFIED
 from .debug import DebugLogger
 from .defaults import CLASSIFIER_BASE_PROMPT
 from .llm import LLMError, OpenAICompatibleClient
-from .models import AppPaths, CorrectionRecord, ProviderState, Taxonomy
-from .storage import load_recent_corrections
+from .models import ProviderState, Taxonomy
 
 
 class EventClassifier:
@@ -23,14 +22,10 @@ class EventClassifier:
         taxonomy: Taxonomy,
         previous_path: str | None,
     ) -> str:
-        paths = AppPaths.from_state_dir(config.state_dir)
-        corrections = load_recent_corrections(
-            paths.corrections_log, config.classifier.correction_retention_days
-        )
         allowed_paths = sorted(taxonomy.allowed_paths())
         valid_outputs = allowed_paths + [PANEL_KIND_UNCLASSIFIED]
         base_prompt = self._build_prompt(
-            config, state, taxonomy, previous_path, valid_outputs, corrections
+            config, state, taxonomy, previous_path, valid_outputs
         )
         last_invalid: str | None = None
         for attempt in range(config.classifier.retry_count + 1):
@@ -80,34 +75,14 @@ class EventClassifier:
         taxonomy: Taxonomy,
         previous_path: str | None,
         valid_outputs: list[str],
-        corrections: list[CorrectionRecord] | None = None,
     ) -> str:
         sections = [
             CLASSIFIER_BASE_PROMPT.strip(),
             "Allowed outputs:\n" + "\n".join(f"- {path}" for path in valid_outputs),
             "Taxonomy details:\n" + taxonomy.describe(),
-        ]
-
-        if corrections:
-            correction_lines = []
-            for c in corrections[-10:]:  # Last 10 corrections
-                win = c.state.focused_window
-                if win:
-                    correction_lines.append(
-                        f"- Title: \"{win.title}\", Class: \"{win.wm_class}\" -> "
-                        f"classified as \"{c.previous_path or 'unknown'}\", "
-                        f"corrected to \"{c.manual_path}\""
-                    )
-            if correction_lines:
-                sections.append(
-                    "Recent manual corrections by user (learn from these):\n"
-                    + "\n".join(correction_lines)
-                )
-
-        sections.extend([
             f"Previous path: {previous_path or 'none'}",
             "Current event:\n" + self._state_summary(state),
-        ])
+        ]
         rendered_instructions = config.render_classifier_instructions().strip()
         if rendered_instructions:
             sections.append("User instructions:\n" + rendered_instructions)
