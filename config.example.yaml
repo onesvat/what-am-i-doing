@@ -47,3 +47,5 @@ tools:
     telegram:
       run: ["telegram-send"]
       timeout_seconds: 10
+
+learned: []
