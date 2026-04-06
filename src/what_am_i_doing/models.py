@@ -20,6 +20,13 @@ from .constants import (
 )
 
 
+@dataclass(slots=True)
+class RefreshResult:
+    success: bool
+    message: str
+    used_cached: bool = False
+
+
 class ToolCall(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

@@ -10,7 +10,7 @@ from dbus_next.constants import PropertyAccess
 from dbus_next.service import ServiceInterface, dbus_property, method, signal
 
 from .constants import DAEMON_BUS_NAME, DAEMON_INTERFACE, DAEMON_OBJECT_PATH
-from .models import PanelStateRecord
+from .models import PanelStateRecord, RefreshResult
 
 log = logging.getLogger("waid.comm")
 
@@ -20,7 +20,7 @@ PROPERTIES_INTERFACE = "org.freedesktop.DBus.Properties"
 class DaemonInterface(ServiceInterface):
     def __init__(
         self,
-        refresh_callback: Callable[[], Awaitable[None]],
+        refresh_callback: Callable[[], Awaitable[RefreshResult]],
         initial_panel_state: PanelStateRecord,
     ) -> None:
         super().__init__(DAEMON_INTERFACE)
@@ -71,9 +71,9 @@ class DaemonInterface(ServiceInterface):
         return self._legacy_status_json
 
     @method()
-    async def RefreshTaxonomy(self) -> "b":
-        await self._refresh_callback()
-        return True
+    async def RefreshTaxonomy(self) -> "bs":
+        result = await self._refresh_callback()
+        return [result.success, result.message]
 
     @signal()
     def PanelStateChanged(self, revision: "u", payload: "s") -> "us":
@@ -177,7 +177,7 @@ async def daemon_status_payload() -> dict[str, object]:
         bus.disconnect()
 
 
-async def daemon_refresh_taxonomy() -> bool:
+async def daemon_refresh_taxonomy() -> tuple[bool, str]:
     bus = await MessageBus(bus_type=BusType.SESSION).connect()
     try:
         introspection = await bus.introspect(DAEMON_BUS_NAME, DAEMON_OBJECT_PATH)

@@ -141,15 +141,21 @@ async def _run_daemon(config_path: str) -> None:
 async def _run_refresh(config_path: str, *, local: bool) -> None:
     if not local:
         try:
-            await daemon_refresh_taxonomy()
-            print("taxonomy refreshed via daemon")
+            success, message = await daemon_refresh_taxonomy()
+            if success:
+                print(f"taxonomy refreshed: {message}")
+            else:
+                print(f"warning: {message}")
             return
         except (DBusError, RuntimeError):
             pass
     config = load_config(config_path)
     daemon = ActivityDaemon(config)
-    await daemon.refresh_taxonomy()
-    print("taxonomy refreshed locally")
+    result = await daemon.refresh_taxonomy()
+    if result.success:
+        print(f"taxonomy refreshed: {result.message}")
+    else:
+        print(f"warning: {result.message}")
 
 
 async def _run_status(json_output: bool) -> None:

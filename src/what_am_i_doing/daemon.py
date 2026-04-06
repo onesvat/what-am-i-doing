@@ -23,6 +23,7 @@ from .models import (
     AppPaths,
     PanelStateRecord,
     ProviderSnapshot,
+    RefreshResult,
     SpanRecord,
     Taxonomy,
     utcnow,
@@ -89,7 +90,7 @@ class ActivityDaemon:
             last_snapshot=None,
         )
 
-    async def refresh_taxonomy(self) -> None:
+    async def refresh_taxonomy(self) -> RefreshResult:
         async with self._refresh_lock:
             context_outputs: dict[str, str] = {}
             for name, tool in self.config.tools.context.items():
@@ -100,12 +101,16 @@ class ActivityDaemon:
             self.debug.log("taxonomy_refresh_start", context_outputs=context_outputs)
             try:
                 taxonomy = await self.generator.generate(self.config, context_outputs)
+                message = f"Generated {len(taxonomy.allowed_paths())} categories"
+                result = RefreshResult(success=True, message=message, used_cached=False)
             except Exception as exc:
                 self.debug.log("taxonomy_refresh_failed", error=str(exc))
                 taxonomy = self.config.normalize_generated_taxonomy(
                     load_taxonomy(self.paths.taxonomy_json)
                     or self.config.seed_taxonomy()
                 )
+                message = f"Generator failed ({exc}), using cached taxonomy"
+                result = RefreshResult(success=False, message=message, used_cached=True)
             self.runtime.taxonomy = taxonomy
             self.runtime.taxonomy_hash = taxonomy.fingerprint()
             save_taxonomy(self.paths.taxonomy_json, taxonomy)
@@ -115,6 +120,7 @@ class ActivityDaemon:
                 categories=sorted(taxonomy.allowed_paths()),
             )
             await self._reconcile_panel_state_after_taxonomy_refresh()
+            return result
 
     async def run(self) -> None:
         await self.dbus_service.start()
