@@ -25,23 +25,23 @@
     text-align: right;
 }
 
-.waid-radio-item {
+.waid-stat-row {
     padding: 2px 8px;
     spacing: 2px;
 }
 
 .waid-subcategory-item {
-    padding-left: 16px;
+    padding-left: 24px;
 }
 
-.waid-radio-icon {
-    icon-size: 12px;
+.waid-selected-row {
+    background-color: alpha(white, 0.1);
 }
 
 .waid-stat-icon {
     icon-size: 12px;
 }
 
-.waid-radio-selected {
+.waid-selected-label {
     font-weight: bold;
 }

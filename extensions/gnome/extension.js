@@ -239,7 +239,7 @@ export default class WaidExtension extends Extension {
         this._currentStatus = status;
         if (status.kind === PANEL_KIND_CLASSIFIED) {
             this._indicator.setStatus(
-                status.top_level_label || status.top_level_id || PANEL_KIND_CLASSIFIED,
+                status.path || status.top_level_label || status.top_level_id || PANEL_KIND_CLASSIFIED,
                 status.icon_name
             );
         } else if (status.kind === PANEL_KIND_UNCLASSIFIED) {
@@ -272,10 +272,6 @@ export default class WaidExtension extends Extension {
 
     _requestRefresh() {
         this._callDaemon('RefreshTaxonomy');
-    }
-
-    _manualClassify(path) {
-        this._callDaemon('ManualClassify', new GLib.Variant('(s)', [path]));
     }
 
     _callDaemon(method, params = null) {
@@ -438,17 +434,16 @@ export default class WaidExtension extends Extension {
 
     _addRadioStatRow(label, fullPath, seconds, iconName, isSubcategory, isSelected, hasChildren) {
         const item = new PopupMenu.PopupMenuItem('');
-        item.add_style_class_name('waid-radio-item');
+        item.add_style_class_name('waid-stat-row');
+        item.sensitive = false;
         
         if (isSubcategory) {
             item.add_style_class_name('waid-subcategory-item');
         }
         
-        const radioIcon = new St.Icon({
-            icon_name: isSelected ? 'bullet-symbolic' : 'radio-symbolic',
-            style_class: 'waid-radio-icon popup-menu-icon',
-        });
-        item.add_child(radioIcon);
+        if (isSelected) {
+            item.add_style_class_name('waid-selected-row');
+        }
         
         if (iconName) {
             const catIcon = new St.Icon({
@@ -462,7 +457,7 @@ export default class WaidExtension extends Extension {
         
         const nameLabel = new St.Label({
             text: label,
-            style_class: isSelected ? 'waid-radio-selected' : '',
+            style_class: isSelected ? 'waid-selected-label' : '',
             x_expand: true,
             y_align: Clutter.ActorAlign.CENTER,
         });
@@ -475,12 +470,6 @@ export default class WaidExtension extends Extension {
         
         item.add_child(nameLabel);
         item.add_child(durLabel);
-        
-        if (hasChildren) {
-            item.sensitive = false;
-        } else {
-            item.connect('activate', () => this._manualClassify(fullPath));
-        }
         
         this._indicator.menu.addMenuItem(item);
     }
