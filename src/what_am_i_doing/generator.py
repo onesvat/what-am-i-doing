@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 from .config import AppConfig
+from .debug import DebugLogger
 from .defaults import GENERATOR_BASE_PROMPT
 from .llm import LLMError, OpenAICompatibleClient
 from .models import Taxonomy
 
 
 class TaxonomyGenerator:
-    def __init__(self, client: OpenAICompatibleClient) -> None:
+    def __init__(self, client: OpenAICompatibleClient, debug: DebugLogger | None = None) -> None:
         self.client = client
+        self.debug = debug
 
     async def generate(self, config: AppConfig, context_outputs: dict[str, str]) -> Taxonomy:
         rendered_instructions = config.render_generator_instructions(
@@ -19,8 +21,15 @@ class TaxonomyGenerator:
         ).strip()
         prompt = self._build_prompt(config, context_outputs, rendered_instructions)
         last_error: Exception | None = None
-        for _ in range(config.generator.retry_count + 1):
+        for attempt in range(config.generator.retry_count + 1):
             try:
+                if self.debug is not None:
+                    self.debug.log(
+                        "generator_attempt",
+                        attempt=attempt,
+                        context_outputs=context_outputs,
+                        prompt=prompt,
+                    )
                 content = self.client.chat(
                     config.model,
                     [{"role": "user", "content": prompt}],
@@ -28,9 +37,17 @@ class TaxonomyGenerator:
                 )
                 taxonomy = Taxonomy.model_validate_json(content).ensure_fallback(config.fallback_category)
                 taxonomy.validate_action_tool_refs(set(config.tools.actions))
+                if self.debug is not None:
+                    self.debug.log(
+                        "generator_result",
+                        attempt=attempt,
+                        taxonomy=taxonomy.model_dump(mode="json", exclude_none=True),
+                    )
                 return taxonomy
             except (LLMError, ValueError) as exc:
                 last_error = exc
+                if self.debug is not None:
+                    self.debug.log("generator_error", attempt=attempt, error=str(exc))
         raise RuntimeError(f"generator failed: {last_error}") from last_error
 
     def _build_prompt(

@@ -172,6 +172,7 @@ class AppPaths:
     state_dir: Path
     raw_events_log: Path
     activity_log: Path
+    debug_log: Path
     taxonomy_json: Path
     status_json: Path
     spans_log: Path
@@ -186,6 +187,7 @@ class AppPaths:
             state_dir=state_dir,
             raw_events_log=state_dir / "raw-events.jsonl",
             activity_log=state_dir / "activity.jsonl",
+            debug_log=state_dir / "debug.jsonl",
             taxonomy_json=state_dir / "taxonomy.json",
             status_json=state_dir / "status.json",
             spans_log=state_dir / "spans.jsonl",

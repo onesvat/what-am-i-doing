@@ -10,6 +10,7 @@ from typing import Any
 from .actions import CommandRunner
 from .classifier import EventClassifier
 from .config import AppConfig
+from .debug import DebugLogger, debug_enabled
 from .dbus_service import DaemonDBusService
 from .generator import TaxonomyGenerator
 from .llm import OpenAICompatibleClient
@@ -39,10 +40,11 @@ class ActivityDaemon:
         self.config = config
         self.paths = AppPaths.from_state_dir(config.state_dir)
         ensure_state_dir(self.paths)
-        self.client = OpenAICompatibleClient()
-        self.generator = TaxonomyGenerator(self.client)
-        self.classifier = EventClassifier(self.client)
-        self.command_runner = CommandRunner()
+        self.debug = DebugLogger(self.paths.debug_log, enabled=debug_enabled())
+        self.client = OpenAICompatibleClient(self.debug)
+        self.generator = TaxonomyGenerator(self.client, self.debug)
+        self.classifier = EventClassifier(self.client, self.debug)
+        self.command_runner = CommandRunner(self.debug)
         self.provider = GnomeProvider()
         self.decision_cache: dict[str, str] = {}
         self.runtime = self._load_runtime_state()
@@ -67,14 +69,21 @@ class ActivityDaemon:
             for name, tool in self.config.tools.context.items():
                 result = await self.command_runner.run(tool, [])
                 context_outputs[name] = result.stdout if result.stdout else result.stderr
+            self.debug.log("taxonomy_refresh_start", context_outputs=context_outputs)
             try:
                 taxonomy = await self.generator.generate(self.config, context_outputs)
-            except Exception:
+            except Exception as exc:
+                self.debug.log("taxonomy_refresh_failed", error=str(exc))
                 taxonomy = load_taxonomy(self.paths.taxonomy_json) or self.config.seed_taxonomy()
             taxonomy = taxonomy.ensure_fallback(self.config.fallback_category)
             self.runtime.taxonomy = taxonomy
             self.runtime.taxonomy_hash = taxonomy.fingerprint()
             save_taxonomy(self.paths.taxonomy_json, taxonomy)
+            self.debug.log(
+                "taxonomy_refresh_complete",
+                taxonomy_hash=self.runtime.taxonomy_hash,
+                categories=sorted(taxonomy.allowed_paths()),
+            )
 
     async def run(self) -> None:
         await self.dbus_service.start()
@@ -93,6 +102,12 @@ class ActivityDaemon:
         previous_path = self.runtime.status.current_path if self.runtime.status else None
         cache_key = self._decision_key(state, previous_path)
         selected_path = self.decision_cache.get(cache_key)
+        self.debug.log(
+            "provider_state",
+            previous_path=previous_path,
+            cache_key=cache_key,
+            state=state.model_dump(mode="json", exclude_none=True),
+        )
         if selected_path is None:
             selected_path = await self.classifier.classify(
                 self.config,
@@ -101,7 +116,11 @@ class ActivityDaemon:
                 previous_path,
             )
             self.decision_cache[cache_key] = selected_path
+            self.debug.log("classifier_cache_store", cache_key=cache_key, selected_path=selected_path)
+        else:
+            self.debug.log("classifier_cache_hit", cache_key=cache_key, selected_path=selected_path)
         if previous_path == selected_path:
+            self.debug.log("activity_unchanged", selected_path=selected_path)
             return
         now = utcnow()
         await self._close_previous_span(now)
@@ -118,6 +137,13 @@ class ActivityDaemon:
         self.runtime.last_changed_at = now
         save_status(self.paths.status_json, status)
         self.dbus_service.update_status(status)
+        self.debug.log(
+            "activity_changed",
+            previous_path=previous_path,
+            selected_path=selected_path,
+            top_level=status.top_level,
+            taxonomy_hash=self.runtime.taxonomy_hash,
+        )
         append_jsonl(
             self.paths.activity_log,
             {
@@ -160,6 +186,11 @@ class ActivityDaemon:
 
     async def _run_actions(self, path: str) -> None:
         calls = self.runtime.taxonomy.tools_for_path(path)
+        self.debug.log(
+            "action_dispatch",
+            path=path,
+            calls=[call.model_dump(mode="json") for call in calls],
+        )
         if not calls:
             return
         await self.command_runner.run_calls(self.config.tools.actions, calls)

@@ -123,6 +123,42 @@ waid config validate
 waid extension status
 ```
 
+### Debug Mode
+
+If you want to debug what `waid` receives and what it sends to the model, start it with:
+
+```bash
+WAID_DEBUG=1 waid run
+```
+
+Or for the service:
+
+```bash
+systemctl --user edit waid.service
+```
+
+Add:
+
+```ini
+[Service]
+Environment=WAID_DEBUG=1
+```
+
+Then reload and restart:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user restart waid.service
+```
+
+Debug entries are written to:
+
+```text
+~/.local/state/waid/debug.jsonl
+```
+
+This includes provider state, rendered prompts, raw LLM responses, classifier results, and tool execution output.
+
 ## The Config, Explained Simply
 
 The config is small on purpose.

@@ -22,3 +22,4 @@ DAEMON_OBJECT_PATH = "/org/waid/Daemon"
 DAEMON_INTERFACE = "org.waid.Daemon"
 
 FALLBACK_CATEGORY = "unknown"
+DEBUG_ENV_VAR = "WAID_DEBUG"

@@ -6,6 +6,7 @@ from typing import Any
 from urllib import request
 
 from .config import ModelConfig
+from .debug import DebugLogger
 
 
 class LLMError(RuntimeError):
@@ -13,6 +14,9 @@ class LLMError(RuntimeError):
 
 
 class OpenAICompatibleClient:
+    def __init__(self, debug: DebugLogger | None = None) -> None:
+        self.debug = debug
+
     def chat(
         self,
         model: ModelConfig,
@@ -36,12 +40,25 @@ class OpenAICompatibleClient:
         api_key = os.environ.get(model.api_key_env, "").strip() if model.api_key_env else ""
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
+        if self.debug is not None:
+            self.debug.log(
+                "llm_request",
+                model=model.name,
+                endpoint=endpoint,
+                json_mode=json_mode,
+                max_tokens=max_tokens,
+                messages=messages,
+            )
         req = request.Request(endpoint, data=data, headers=headers, method="POST")
         try:
             with request.urlopen(req, timeout=model.timeout_seconds) as resp:
                 body = resp.read().decode("utf-8")
         except Exception as exc:  # pragma: no cover - exercised in integration
+            if self.debug is not None:
+                self.debug.log("llm_error", model=model.name, endpoint=endpoint, error=str(exc))
             raise LLMError(str(exc)) from exc
+        if self.debug is not None:
+            self.debug.log("llm_response_raw", model=model.name, body=body)
         try:
             parsed = json.loads(body)
             content = parsed["choices"][0]["message"]["content"]
@@ -49,4 +66,6 @@ class OpenAICompatibleClient:
             raise LLMError(f"invalid llm response: {body}") from exc
         if not isinstance(content, str):
             raise LLMError("llm content is not a string")
+        if self.debug is not None:
+            self.debug.log("llm_response", model=model.name, content=content.strip())
         return content.strip()

@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 from .config import AppConfig
+from .debug import DebugLogger
 from .defaults import CLASSIFIER_BASE_PROMPT
 from .llm import LLMError, OpenAICompatibleClient
 from .models import ProviderState, Taxonomy
 
 
 class EventClassifier:
-    def __init__(self, client: OpenAICompatibleClient) -> None:
+    def __init__(self, client: OpenAICompatibleClient, debug: DebugLogger | None = None) -> None:
         self.client = client
+        self.debug = debug
 
     async def classify(
         self,
@@ -32,15 +34,32 @@ class EventClassifier:
                     + "\nReturn only one valid path exactly."
                 )
             try:
+                if self.debug is not None:
+                    self.debug.log(
+                        "classifier_attempt",
+                        attempt=attempt,
+                        previous_path=previous_path,
+                        allowed=allowed,
+                        prompt=prompt,
+                    )
                 result = self.client.chat(
                     config.model,
                     [{"role": "user", "content": prompt}],
                 ).strip()
             except LLMError:
                 result = ""
+            if self.debug is not None:
+                self.debug.log("classifier_result", attempt=attempt, result=result)
             if result in taxonomy.allowed_paths():
                 return result
             last_invalid = result or "<empty>"
+        if self.debug is not None:
+            self.debug.log(
+                "classifier_fallback",
+                previous_path=previous_path,
+                fallback=config.fallback_category,
+                last_invalid=last_invalid,
+            )
         return config.fallback_category
 
     def _build_prompt(

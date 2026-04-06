@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass
 
 from ..config import CommandConfig
+from ..debug import DebugLogger
 from ..models import ToolCall
 
 
@@ -15,7 +16,12 @@ class CommandResult:
 
 
 class CommandRunner:
+    def __init__(self, debug: DebugLogger | None = None) -> None:
+        self.debug = debug
+
     async def run(self, tool: CommandConfig, args: list[str]) -> CommandResult:
+        if self.debug is not None:
+            self.debug.log("tool_run", command=tool.run, args=args, timeout_seconds=tool.timeout_seconds)
         proc = await asyncio.create_subprocess_exec(
             *tool.run,
             *args,
@@ -27,12 +33,24 @@ class CommandRunner:
         except TimeoutError:
             proc.kill()
             await proc.wait()
+            if self.debug is not None:
+                self.debug.log("tool_timeout", command=tool.run, args=args)
             raise RuntimeError(f"tool timed out: {' '.join(tool.run)}")
-        return CommandResult(
+        result = CommandResult(
             returncode=proc.returncode,
             stdout=stdout.decode("utf-8", errors="replace").strip(),
             stderr=stderr.decode("utf-8", errors="replace").strip(),
         )
+        if self.debug is not None:
+            self.debug.log(
+                "tool_result",
+                command=tool.run,
+                args=args,
+                returncode=result.returncode,
+                stdout=result.stdout,
+                stderr=result.stderr,
+            )
+        return result
 
     async def run_calls(self, tools: dict[str, CommandConfig], calls: list[ToolCall]) -> list[CommandResult]:
         results: list[CommandResult] = []
