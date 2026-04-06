@@ -15,7 +15,9 @@ from what_am_i_doing.service import render_unit
 class ServiceTest(unittest.TestCase):
     def test_render_unit_contains_module_run_command(self) -> None:
         unit = render_unit()
-        self.assertIn("-m what_am_i_doing run --config", unit)
+        self.assertIn("-m what_am_i_doing --config", unit)
+        self.assertIn("--config", unit)
+        self.assertIn(" run", unit)
         self.assertIn("waid desktop activity tracker", unit)
 
 

@@ -218,6 +218,7 @@ def _run_extension_command(args: argparse.Namespace) -> None:
         print(f"installed extension to {EXTENSION_DIR}")
         print(f"enable with: gnome-extensions enable {EXTENSION_UUID}")
         print("if GNOME says the extension does not exist yet, log out and back in first, then run the enable command again")
+        print("if GNOME marks the extension as out of date after an upgrade, log out and back in so Shell reloads the new metadata")
         return
     if args.extension_command == "status":
         print(f"extension dir: {EXTENSION_DIR}")

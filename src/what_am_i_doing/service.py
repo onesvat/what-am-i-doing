@@ -22,9 +22,9 @@ def render_unit(config_path: Path | None = None) -> str:
             sys.executable,
             "-m",
             "what_am_i_doing",
-            "run",
             "--config",
             str(effective_config),
+            "run",
         )
     )
     return template.replace("{{ exec_start }}", exec_start)

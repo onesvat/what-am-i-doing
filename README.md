@@ -83,6 +83,8 @@ If you want to start from a file instead, copy [config.example.yaml](/home/onur/
 
 ### 3. Install the GNOME extension
 
+Right now the extension is targeted at GNOME 49.
+
 ```bash
 waid extension install
 gnome-extensions enable waid@onesvat.github.io
@@ -364,6 +366,16 @@ waid doctor
 ```
 
 Then restart GNOME Shell or log out and back in.
+
+### GNOME says the extension is `OUT OF DATE`
+
+This usually means GNOME Shell has not reloaded the extension metadata yet.
+
+After `waid extension install`, log out and back in, then run:
+
+```bash
+gnome-extensions enable waid@onesvat.github.io
+```
 
 ### A command never runs
 
