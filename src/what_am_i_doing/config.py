@@ -20,7 +20,8 @@ class ModelConfig(BaseModel):
 
     base_url: str
     name: str
-    api_key_env: str = "OPENAI_API_KEY"
+    api_key_env: str = ""
+    api_key: str = ""
     timeout_seconds: int = 30
     temperature: float = 0.0
 
@@ -63,7 +64,9 @@ class ToolRegistry(BaseModel):
 
     @field_validator("context", "actions")
     @classmethod
-    def validate_tool_names(cls, value: dict[str, CommandConfig]) -> dict[str, CommandConfig]:
+    def validate_tool_names(
+        cls, value: dict[str, CommandConfig]
+    ) -> dict[str, CommandConfig]:
         for name in value:
             if not IDENTIFIER_RE.match(name):
                 raise ValueError(
@@ -79,6 +82,7 @@ class GeneratorConfig(BaseModel):
     retry_count: int = 1
     categories: list[GeneratorCategorySeed] = Field(default_factory=list)
     instructions: str = ""
+    model: ModelConfig | None = None
 
 
 class ClassifierConfig(BaseModel):
@@ -87,6 +91,8 @@ class ClassifierConfig(BaseModel):
     retry_count: int = 2
     instructions: str = ""
     params: dict[str, str] = Field(default_factory=dict)
+    correction_retention_days: int = 7
+    model: ModelConfig | None = None
 
     @field_validator("params")
     @classmethod
@@ -116,6 +122,14 @@ class AppConfig(BaseModel):
         if len(names) != len(set(names)):
             raise ValueError("generator category names must be unique")
         return self
+
+    @property
+    def generator_model(self) -> "ModelConfig":
+        return self.generator.model or self.model
+
+    @property
+    def classifier_model(self) -> "ModelConfig":
+        return self.classifier.model or self.model
 
     @property
     def state_dir(self) -> Path:
@@ -151,16 +165,53 @@ class AppConfig(BaseModel):
                     )
                 )
                 continue
-            categories.append(
-                TaxonomyNode(
-                    name=node.name,
-                    description=node.description or category.note or f"Broad {node.name} activity.",
-                    icon=_default_icon_for(node.name),
-                    tool_calls=node.tool_calls,
-                    children=node.children,
-                )
-            )
+            normalized_node = self._normalize_node(node, category.note)
+            categories.append(normalized_node)
         return Taxonomy(categories=categories)
+
+    def _normalize_node(
+        self, node: TaxonomyNode, fallback_note: str = ""
+    ) -> TaxonomyNode:
+        children = node.children or []
+        has_children = len(children) > 0
+
+        if has_children:
+            tool_calls = []
+            has_other = any(child.name == "other" for child in children)
+            if not has_other:
+                children.append(
+                    TaxonomyNode(
+                        name="other",
+                        description=f"General {node.name} activities not matching specific subcategories.",
+                        icon=_default_icon_for(f"{node.name}/other"),
+                        tool_calls=list(node.tool_calls),
+                        children=[],
+                    )
+                )
+            else:
+                for i, child in enumerate(children):
+                    if child.name == "other" and not child.tool_calls:
+                        children[i] = TaxonomyNode(
+                            name="other",
+                            description=child.description
+                            or f"General {node.name} activities not matching specific subcategories.",
+                            icon=child.icon or _default_icon_for(f"{node.name}/other"),
+                            tool_calls=list(node.tool_calls),
+                            children=child.children or [],
+                        )
+                        break
+        else:
+            tool_calls = node.tool_calls or []
+
+        return TaxonomyNode(
+            name=node.name,
+            description=node.description
+            or fallback_note
+            or f"Broad {node.name} activity.",
+            icon=_default_icon_for(node.name),
+            tool_calls=tool_calls,
+            children=children,
+        )
 
     def render_generator_instructions(self, variables: dict[str, str]) -> str:
         return interpolate_text(self.generator.instructions, variables)
@@ -235,10 +286,12 @@ def build_minimal_config(
             },
             "tools": {
                 "context": {
-                    name: tool.model_dump(mode="python") for name, tool in context_tools.items()
+                    name: tool.model_dump(mode="python")
+                    for name, tool in context_tools.items()
                 },
                 "actions": {
-                    name: tool.model_dump(mode="python") for name, tool in action_tools.items()
+                    name: tool.model_dump(mode="python")
+                    for name, tool in action_tools.items()
                 },
             },
         }
@@ -248,9 +301,14 @@ def build_minimal_config(
 def _default_icon_for(name: str) -> str:
     icons = {
         "coding": "laptop-symbolic",
+        "coding/other": "laptop-symbolic",
         "messaging": "mail-unread-symbolic",
+        "messaging/other": "mail-unread-symbolic",
         "planning": "view-calendar-symbolic",
+        "planning/other": "view-calendar-symbolic",
         "surfing": "web-browser-symbolic",
+        "surfing/other": "web-browser-symbolic",
         "adult": "dialog-warning-symbolic",
+        "other": "applications-system-symbolic",
     }
     return icons.get(name, "applications-system-symbolic")

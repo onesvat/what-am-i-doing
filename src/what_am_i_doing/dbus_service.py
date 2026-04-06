@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Awaitable, Callable
 
 from dbus_next import BusType
@@ -11,6 +12,8 @@ from dbus_next.service import ServiceInterface, dbus_property, method, signal
 from .constants import DAEMON_BUS_NAME, DAEMON_INTERFACE, DAEMON_OBJECT_PATH
 from .models import PanelStateRecord
 
+log = logging.getLogger("waid.comm")
+
 PROPERTIES_INTERFACE = "org.freedesktop.DBus.Properties"
 
 
@@ -18,10 +21,12 @@ class DaemonInterface(ServiceInterface):
     def __init__(
         self,
         refresh_callback: Callable[[], Awaitable[None]],
+        manual_classify_callback: Callable[[str], Awaitable[None]],
         initial_panel_state: PanelStateRecord,
     ) -> None:
         super().__init__(DAEMON_INTERFACE)
         self._refresh_callback = refresh_callback
+        self._manual_classify_callback = manual_classify_callback
         self._panel_state = initial_panel_state
         self._panel_state_json = initial_panel_state.payload_json()
         self._legacy_status_json = self._build_legacy_status_json(initial_panel_state)
@@ -72,6 +77,11 @@ class DaemonInterface(ServiceInterface):
         await self._refresh_callback()
         return True
 
+    @method()
+    async def ManualClassify(self, path: "s") -> "b":
+        await self._manual_classify_callback(path)
+        return True
+
     @signal()
     def PanelStateChanged(self, revision: "u", payload: "s") -> "us":
         return [revision, payload]
@@ -85,6 +95,12 @@ class DaemonInterface(ServiceInterface):
         self._panel_state_json = panel_state.payload_json()
         self._legacy_status_json = self._build_legacy_status_json(panel_state)
         self._set_panel_fields(panel_state)
+        log.info(
+            "send ext <- rev=%d kind=%s path=%s",
+            panel_state.revision,
+            panel_state.kind,
+            panel_state.path or "-",
+        )
         self.emit_properties_changed(
             {
                 "PanelRevision": self._panel_revision,
@@ -125,11 +141,15 @@ class DaemonDBusService:
     def __init__(
         self,
         refresh_callback: Callable[[], Awaitable[None]],
+        manual_classify_callback: Callable[[str], Awaitable[None]],
         initial_panel_state: PanelStateRecord,
     ) -> None:
         self._refresh_callback = refresh_callback
+        self._manual_classify_callback = manual_classify_callback
         self._bus: MessageBus | None = None
-        self.interface = DaemonInterface(refresh_callback, initial_panel_state)
+        self.interface = DaemonInterface(
+            refresh_callback, manual_classify_callback, initial_panel_state
+        )
 
     async def start(self) -> None:
         self._bus = await MessageBus(bus_type=BusType.SESSION).connect()

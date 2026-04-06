@@ -4,7 +4,8 @@ from .config import AppConfig
 from .debug import DebugLogger
 from .defaults import GENERATOR_BASE_PROMPT
 from .llm import LLMError, OpenAICompatibleClient
-from .models import Taxonomy
+from .models import AppPaths, CorrectionRecord, Taxonomy
+from .storage import load_recent_corrections
 
 
 class TaxonomyGenerator:
@@ -13,8 +14,12 @@ class TaxonomyGenerator:
         self.debug = debug
 
     async def generate(self, config: AppConfig, context_outputs: dict[str, str]) -> Taxonomy:
+        paths = AppPaths.from_state_dir(config.state_dir)
+        corrections = load_recent_corrections(
+            paths.corrections_log, config.classifier.correction_retention_days
+        )
         rendered_instructions = config.render_generator_instructions(context_outputs).strip()
-        prompt = self._build_prompt(config, context_outputs, rendered_instructions)
+        prompt = self._build_prompt(config, context_outputs, rendered_instructions, corrections)
         last_error: Exception | None = None
         for attempt in range(config.generator.retry_count + 1):
             try:
@@ -26,7 +31,7 @@ class TaxonomyGenerator:
                         prompt=prompt,
                     )
                 content = self.client.chat(
-                    config.model,
+                    config.generator_model,
                     [{"role": "user", "content": prompt}],
                     json_mode=True,
                 )
@@ -51,6 +56,7 @@ class TaxonomyGenerator:
         config: AppConfig,
         context_outputs: dict[str, str],
         rendered_instructions: str,
+        corrections: list[CorrectionRecord] | None = None,
     ) -> str:
         category_lines = [
             f"- {category.name}: {category.note or 'no extra note'}"
@@ -70,6 +76,22 @@ class TaxonomyGenerator:
             "Action tool inventory:\n" + ("\n".join(action_tool_lines) if action_tool_lines else "- none"),
             "Context outputs:\n" + ("\n\n".join(context_blocks) if context_blocks else "None."),
         ]
+
+        if corrections:
+            correction_lines = []
+            for c in corrections[-20:]:  # More for generator
+                win = c.state.focused_window
+                if win:
+                    correction_lines.append(
+                        f"- Window Title: \"{win.title}\", Class: \"{win.wm_class}\" -> "
+                        f"user corrected to \"{c.manual_path}\""
+                    )
+            if correction_lines:
+                sections.append(
+                    "User's manual classification corrections (ensure taxonomy supports these needs):\n"
+                    + "\n".join(correction_lines)
+                )
+
         if rendered_instructions:
             sections.append("User instructions:\n" + rendered_instructions)
         return "\n\n".join(sections)

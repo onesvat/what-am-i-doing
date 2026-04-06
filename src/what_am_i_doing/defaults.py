@@ -19,6 +19,8 @@ Rules:
 - Do not invent, rename, or remove top-level categories from the hints.
 - Only reference action tools that appear in the provided action tool inventory.
 - Keep top-level categories broad and add children only when they are useful for real actions.
+- CRITICAL: Parent categories with children MUST NOT have tool_calls. Only leaf categories can have tool_calls.
+- CRITICAL: If a parent has children, add a "{parent}/other" child as a catch-all for activities that don't fit specific children. The "other" child should have no tool_calls or a simple stop action.
 - Use GNOME icon names like `laptop-symbolic`, not emoji.
 """
 

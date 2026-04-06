@@ -1,0 +1,47 @@
+.waid-header-label {
+    font-weight: bold;
+}
+
+.waid-header-icon {
+    icon-size: 12px;
+}
+
+.waid-duration {
+    font-variant-numeric: tabular-nums;
+    min-width: 4em;
+    text-align: right;
+    color: alpha(white, 0.6);
+}
+
+.waid-total-label {
+    font-weight: bold;
+    x-expand: true;
+}
+
+.waid-total-duration {
+    font-weight: bold;
+    font-variant-numeric: tabular-nums;
+    min-width: 4em;
+    text-align: right;
+}
+
+.waid-radio-item {
+    padding: 2px 8px;
+    spacing: 2px;
+}
+
+.waid-subcategory-item {
+    padding-left: 16px;
+}
+
+.waid-radio-icon {
+    icon-size: 12px;
+}
+
+.waid-stat-icon {
+    icon-size: 12px;
+}
+
+.waid-radio-selected {
+    font-weight: bold;
+}

@@ -61,7 +61,8 @@ class Taxonomy(BaseModel):
     def allowed_paths(self) -> set[str]:
         result: set[str] = set()
         for node in self.categories:
-            result.add(node.name)
+            if not node.children:
+                result.add(node.name)
             for child in node.children:
                 result.add(f"{node.name}/{child.name}")
         return result
@@ -83,10 +84,9 @@ class Taxonomy(BaseModel):
 
     def tools_for_path(self, path: str) -> list[ToolCall]:
         top, child = self.node_for_path(path)
-        calls = list(top.tool_calls)
         if child is not None:
-            calls.extend(child.tool_calls)
-        return calls
+            return list(child.tool_calls)
+        return list(top.tool_calls)
 
     def describe(self) -> str:
         lines: list[str] = []
@@ -120,12 +120,16 @@ class WindowInfo(BaseModel):
     wm_class: str = ""
     wm_class_instance: str | None = None
     pid: int | None = None
+    app_id: str | None = None
     workspace: int | None = None
     workspace_name: str | None = None
     monitor: str | None = None
     monitor_index: int | None = None
     fullscreen: bool = False
     maximized: bool = False
+    urgent: bool = False
+    demands_attention: bool = False
+    z_order: int | None = None
     geometry: dict[str, Any] | None = None
 
 
@@ -135,8 +139,10 @@ class ProviderState(BaseModel):
     focused_window: WindowInfo | None = None
     open_windows: list[WindowInfo] = Field(default_factory=list)
     active_workspace: int | None = None
+    active_workspace_name: str | None = None
     workspace_count: int | None = None
     screen_locked: bool = False
+    idle_time_seconds: float | None = None
     timestamp: datetime
 
 
@@ -166,15 +172,26 @@ class PanelStateRecord(BaseModel):
     @model_validator(mode="after")
     def validate_shape(self) -> "PanelStateRecord":
         if self.schema_version != PANEL_SCHEMA_VERSION:
-            raise ValueError(f"unsupported panel state schema version: {self.schema_version}")
+            raise ValueError(
+                f"unsupported panel state schema version: {self.schema_version}"
+            )
         if self.kind == PANEL_KIND_CLASSIFIED:
-            if not self.top_level_id or not self.top_level_label or not self.path or not self.taxonomy_hash:
-                raise ValueError("classified panel state must include top-level, path, and taxonomy hash")
+            if (
+                not self.top_level_id
+                or not self.top_level_label
+                or not self.path
+                or not self.taxonomy_hash
+            ):
+                raise ValueError(
+                    "classified panel state must include top-level, path, and taxonomy hash"
+                )
         else:
             if self.path is not None:
                 raise ValueError("non-classified panel state cannot include a path")
             if self.kind == PANEL_KIND_DISCONNECTED and self.taxonomy_hash is not None:
-                raise ValueError("disconnected panel state cannot include taxonomy hash")
+                raise ValueError(
+                    "disconnected panel state cannot include taxonomy hash"
+                )
         return self
 
     @classmethod
@@ -261,6 +278,16 @@ class SpanRecord(BaseModel):
     duration_seconds: float
 
 
+class CorrectionRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    timestamp: datetime
+    state: ProviderState
+    previous_path: str | None
+    manual_path: str
+    taxonomy_hash: str | None
+
+
 @dataclass(slots=True)
 class AppPaths:
     state_dir: Path
@@ -270,6 +297,7 @@ class AppPaths:
     taxonomy_json: Path
     status_json: Path
     spans_log: Path
+    corrections_log: Path
 
     @classmethod
     def default(cls) -> "AppPaths":
@@ -285,6 +313,7 @@ class AppPaths:
             taxonomy_json=state_dir / "taxonomy.json",
             status_json=state_dir / "status.json",
             spans_log=state_dir / "spans.jsonl",
+            corrections_log=state_dir / "corrections.jsonl",
         )
 
 

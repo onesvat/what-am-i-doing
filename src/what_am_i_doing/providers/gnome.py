@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from dbus_next import BusType
 from dbus_next.aio import MessageBus
@@ -8,6 +9,8 @@ from dbus_next.aio import MessageBus
 from ..constants import TRACKER_BUS_NAME, TRACKER_INTERFACE, TRACKER_OBJECT_PATH
 from ..models import ProviderSnapshot, ProviderState
 from .base import Provider, ProviderCallback
+
+log = logging.getLogger("waid.comm")
 
 
 DBUS_BUS_NAME = "org.freedesktop.DBus"
@@ -36,9 +39,11 @@ class GnomeProvider(Provider):
         queue: asyncio.Queue[tuple[str, int | None, str | None]] = asyncio.Queue()
 
         if legacy:
+
             def on_state_changed(state_json: str) -> None:
                 queue.put_nowait(("state", current_revision + 1, state_json))
         else:
+
             def on_state_changed(revision: int, state_json: str) -> None:
                 queue.put_nowait(("state", int(revision), state_json))
 
@@ -60,7 +65,9 @@ class GnomeProvider(Provider):
                 if revision <= current_revision:
                     continue
                 if not legacy and revision > current_revision + 1:
-                    snapshot = await self._snapshot_from_interface(tracker, default_revision=current_revision + 1)
+                    snapshot = await self._snapshot_from_interface(
+                        tracker, default_revision=current_revision + 1
+                    )
                     current_revision = snapshot.revision
                     await callback(snapshot)
                     continue
@@ -68,12 +75,28 @@ class GnomeProvider(Provider):
                 try:
                     state = ProviderState.model_validate_json(payload)
                 except Exception:
-                    snapshot = await self._snapshot_from_interface(tracker, default_revision=current_revision + 1)
+                    snapshot = await self._snapshot_from_interface(
+                        tracker, default_revision=current_revision + 1
+                    )
                     current_revision = snapshot.revision
                     await callback(snapshot)
                     continue
                 current_revision = revision
-                await callback(ProviderSnapshot(revision=revision, state=state))
+                snapshot = ProviderSnapshot(revision=revision, state=state)
+                focused = state.focused_window
+                log.info(
+                    "recv ext -> rev=%d title=%s app=%s appid=%s ws=%s idle=%.0fs urgent=%s attn=%s z=%s",
+                    revision,
+                    focused.title if focused else "-",
+                    focused.wm_class if focused else "-",
+                    focused.app_id if focused else "-",
+                    state.active_workspace_name or state.active_workspace or "-",
+                    state.idle_time_seconds or 0,
+                    focused.urgent if focused else False,
+                    focused.demands_attention if focused else False,
+                    focused.z_order if focused else "-",
+                )
+                await callback(snapshot)
         finally:
             tracker.off_state_changed(on_state_changed)
             dbus.off_name_owner_changed(on_name_owner_changed)
@@ -89,7 +112,9 @@ class GnomeProvider(Provider):
         obj = bus.get_proxy_object(DBUS_BUS_NAME, DBUS_OBJECT_PATH, introspection)
         return obj.get_interface(DBUS_INTERFACE)
 
-    async def _snapshot_from_interface(self, tracker, *, default_revision: int) -> ProviderSnapshot:
+    async def _snapshot_from_interface(
+        self, tracker, *, default_revision: int
+    ) -> ProviderSnapshot:
         if hasattr(tracker, "call_get_snapshot"):
             result = await tracker.call_get_snapshot()
             if not isinstance(result, list) or len(result) != 2:

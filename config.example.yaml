@@ -32,11 +32,14 @@ classifier:
 tools:
   context:
     sp_today_tasks:
-      run: ["sp", "list", "today"]
+      run: ["sp", "task", "list", "--today"]
       timeout_seconds: 10
   actions:
-    sp_switch:
-      run: ["sp", "switch"]
+    sp_start_task:
+      run: ["sp", "task", "start"]
+      timeout_seconds: 10
+    sp_stop_task:
+      run: ["sp", "task", "stop"]
       timeout_seconds: 10
     ha:
       run: ["ha"]

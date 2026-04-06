@@ -6,7 +6,14 @@ from pathlib import Path
 from typing import Any
 
 from .constants import PANEL_KIND_CLASSIFIED, PANEL_KIND_UNCLASSIFIED
-from .models import AppPaths, PanelStateRecord, SpanRecord, Taxonomy, utcnow
+from .models import (
+    AppPaths,
+    CorrectionRecord,
+    PanelStateRecord,
+    SpanRecord,
+    Taxonomy,
+    utcnow,
+)
 
 
 def ensure_state_dir(paths: AppPaths) -> None:
@@ -78,6 +85,29 @@ def load_spans(path: Path) -> list[SpanRecord]:
                 continue
             spans.append(SpanRecord.model_validate_json(line))
     return spans
+
+
+def save_correction(path: Path, correction: CorrectionRecord) -> None:
+    append_jsonl(path, correction.model_dump(mode="json"))
+
+
+def load_recent_corrections(path: Path, days: int) -> list[CorrectionRecord]:
+    if not path.exists() or days <= 0:
+        return []
+    corrections: list[CorrectionRecord] = []
+    now = utcnow()
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = CorrectionRecord.model_validate_json(line)
+                if (now - record.timestamp).days < days:
+                    corrections.append(record)
+            except Exception:
+                continue
+    return corrections
 
 
 def parse_timestamp(value: str) -> datetime:

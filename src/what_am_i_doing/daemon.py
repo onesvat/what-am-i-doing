@@ -21,6 +21,7 @@ from .generator import TaxonomyGenerator
 from .llm import OpenAICompatibleClient
 from .models import (
     AppPaths,
+    CorrectionRecord,
     PanelStateRecord,
     ProviderSnapshot,
     SpanRecord,
@@ -33,6 +34,7 @@ from .storage import (
     ensure_state_dir,
     load_status,
     load_taxonomy,
+    save_correction,
     save_span,
     save_status,
     save_taxonomy,
@@ -45,6 +47,7 @@ class RuntimeState:
     taxonomy_hash: str
     panel_state: PanelStateRecord
     last_classified_started_at: datetime | None
+    last_snapshot: ProviderSnapshot | None
 
 
 class ActivityDaemon:
@@ -61,7 +64,9 @@ class ActivityDaemon:
         self.decision_cache: dict[str, str] = {}
         self.runtime = self._load_runtime_state()
         self._refresh_lock = asyncio.Lock()
-        self.dbus_service = DaemonDBusService(self.refresh_taxonomy, self.runtime.panel_state)
+        self.dbus_service = DaemonDBusService(
+            self.refresh_taxonomy, self.manual_classify, self.runtime.panel_state
+        )
 
     def _load_runtime_state(self) -> RuntimeState:
         taxonomy = self.config.normalize_generated_taxonomy(
@@ -70,30 +75,67 @@ class ActivityDaemon:
         taxonomy_hash = taxonomy.fingerprint()
         panel_state = load_status(self.paths.status_json)
         if panel_state is None:
-            panel_state = PanelStateRecord.disconnected(revision=0, published_at=utcnow())
+            panel_state = PanelStateRecord.disconnected(
+                revision=0, published_at=utcnow()
+            )
         last_classified_started_at = (
-            panel_state.published_at if panel_state.kind == PANEL_KIND_CLASSIFIED else None
+            panel_state.published_at
+            if panel_state.kind == PANEL_KIND_CLASSIFIED
+            else None
         )
         return RuntimeState(
             taxonomy=taxonomy,
             taxonomy_hash=taxonomy_hash,
             panel_state=panel_state,
             last_classified_started_at=last_classified_started_at,
+            last_snapshot=None,
         )
+
+    async def manual_classify(self, path: str) -> None:
+        if path not in self.runtime.taxonomy.allowed_paths():
+            self.debug.log("manual_classify_invalid_path", path=path)
+            return
+
+        snapshot = self.runtime.last_snapshot
+        if snapshot is None:
+            self.debug.log("manual_classify_no_snapshot")
+            return
+
+        now = utcnow()
+        previous_path = self._current_selection()
+
+        correction = CorrectionRecord(
+            timestamp=now,
+            state=snapshot.state,
+            previous_path=previous_path,
+            manual_path=path,
+            taxonomy_hash=self.runtime.taxonomy_hash,
+        )
+        save_correction(self.paths.corrections_log, correction)
+
+        # Update cache so future similar windows use this path
+        cache_key = self._decision_key(snapshot, previous_path)
+        self.decision_cache[cache_key] = path
+
+        await self._publish_classified(path, snapshot.state)
+        self.debug.log("manual_classify_success", path=path, cache_key=cache_key)
 
     async def refresh_taxonomy(self) -> None:
         async with self._refresh_lock:
             context_outputs: dict[str, str] = {}
             for name, tool in self.config.tools.context.items():
                 result = await self.command_runner.run(tool, [])
-                context_outputs[name] = result.stdout if result.stdout else result.stderr
+                context_outputs[name] = (
+                    result.stdout if result.stdout else result.stderr
+                )
             self.debug.log("taxonomy_refresh_start", context_outputs=context_outputs)
             try:
                 taxonomy = await self.generator.generate(self.config, context_outputs)
             except Exception as exc:
                 self.debug.log("taxonomy_refresh_failed", error=str(exc))
                 taxonomy = self.config.normalize_generated_taxonomy(
-                    load_taxonomy(self.paths.taxonomy_json) or self.config.seed_taxonomy()
+                    load_taxonomy(self.paths.taxonomy_json)
+                    or self.config.seed_taxonomy()
                 )
             self.runtime.taxonomy = taxonomy
             self.runtime.taxonomy_hash = taxonomy.fingerprint()
@@ -112,6 +154,8 @@ class ActivityDaemon:
         await asyncio.gather(self._refresh_loop(), self._provider_loop())
 
     async def _refresh_loop(self) -> None:
+        if self.config.generator.interval_minutes == -1:
+            return
         while True:
             await asyncio.sleep(self.config.generator.interval_minutes * 60)
             await self.refresh_taxonomy()
@@ -126,6 +170,7 @@ class ActivityDaemon:
                 await asyncio.sleep(1)
 
     async def handle_snapshot(self, snapshot: ProviderSnapshot) -> None:
+        self.runtime.last_snapshot = snapshot
         state = snapshot.state
         self._log_raw_event(snapshot)
         previous_selection = self._previous_selection()
@@ -146,11 +191,18 @@ class ActivityDaemon:
                 previous_selection,
             )
             self.decision_cache[cache_key] = selected
-            self.debug.log("classifier_cache_store", cache_key=cache_key, selected_path=selected)
+            self.debug.log(
+                "classifier_cache_store", cache_key=cache_key, selected_path=selected
+            )
         else:
-            self.debug.log("classifier_cache_hit", cache_key=cache_key, selected_path=selected)
+            self.debug.log(
+                "classifier_cache_hit", cache_key=cache_key, selected_path=selected
+            )
 
-        if self._current_selection() == selected and self.runtime.panel_state.kind != PANEL_KIND_DISCONNECTED:
+        if (
+            self._current_selection() == selected
+            and self.runtime.panel_state.kind != PANEL_KIND_DISCONNECTED
+        ):
             self.debug.log("activity_unchanged", selected_path=selected)
             return
 
@@ -188,7 +240,9 @@ class ActivityDaemon:
             published_at=now,
             taxonomy_hash=self.runtime.taxonomy_hash,
         )
-        await self._commit_panel_state(panel_state, state=state, previous=previous, reason=reason)
+        await self._commit_panel_state(
+            panel_state, state=state, previous=previous, reason=reason
+        )
 
     async def _publish_disconnected(self, *, reason: str | None = None) -> None:
         if self.runtime.panel_state.kind == PANEL_KIND_DISCONNECTED:
@@ -233,8 +287,12 @@ class ActivityDaemon:
                 "path": panel_state.path,
                 "top_level": panel_state.top_level_id,
                 "taxonomy_hash": panel_state.taxonomy_hash,
-                "title": state.focused_window.title if state and state.focused_window else "",
-                "wm_class": state.focused_window.wm_class if state and state.focused_window else "",
+                "title": state.focused_window.title
+                if state and state.focused_window
+                else "",
+                "wm_class": state.focused_window.wm_class
+                if state and state.focused_window
+                else "",
                 "reason": reason,
             },
         )
@@ -245,7 +303,9 @@ class ActivityDaemon:
             return
         if current.path in self.runtime.taxonomy.allowed_paths():
             return
-        await self._publish_unclassified(state=None, reason="path_removed_from_taxonomy")
+        await self._publish_unclassified(
+            state=None, reason="path_removed_from_taxonomy"
+        )
 
     def _log_raw_event(self, snapshot: ProviderSnapshot) -> None:
         window = snapshot.state.focused_window
@@ -258,18 +318,31 @@ class ActivityDaemon:
                 "screen_locked": snapshot.state.screen_locked,
                 "title": window.title if window else "",
                 "wm_class": window.wm_class if window else "",
+                "app_id": window.app_id if window else None,
                 "workspace": window.workspace if window else None,
+                "workspace_name": window.workspace_name if window else None,
+                "active_workspace_name": snapshot.state.active_workspace_name,
+                "urgent": window.urgent if window else False,
+                "demands_attention": window.demands_attention if window else False,
+                "z_order": window.z_order if window else None,
+                "idle_time_seconds": snapshot.state.idle_time_seconds,
             },
         )
 
-    def _decision_key(self, snapshot: ProviderSnapshot, previous_selection: str | None) -> str:
+    def _decision_key(
+        self, snapshot: ProviderSnapshot, previous_selection: str | None
+    ) -> str:
         window = snapshot.state.focused_window
         normalized = {
-            "revision": snapshot.revision,
             "title": window.title if window else "",
             "wm_class": window.wm_class if window else "",
-            "workspace": window.workspace if window else None,
+            "wm_class_instance": window.wm_class_instance if window else None,
+            "workspace_name": window.workspace_name if window else None,
+            "active_workspace_name": snapshot.state.active_workspace_name,
+            "fullscreen": window.fullscreen if window else False,
+            "maximized": window.maximized if window else False,
             "screen_locked": snapshot.state.screen_locked,
+            "idle_time_seconds": snapshot.state.idle_time_seconds,
             "previous_selection": previous_selection,
             "taxonomy_hash": self.runtime.taxonomy_hash,
         }
@@ -290,14 +363,21 @@ class ActivityDaemon:
     async def _close_previous_span(self, ended_at: datetime) -> None:
         if self.runtime.panel_state.kind != PANEL_KIND_CLASSIFIED:
             return
-        if self.runtime.panel_state.path is None or self.runtime.last_classified_started_at is None:
+        if (
+            self.runtime.panel_state.path is None
+            or self.runtime.last_classified_started_at is None
+        ):
             return
         span = SpanRecord(
             path=self.runtime.panel_state.path,
-            top_level=self.runtime.panel_state.top_level_id or self.runtime.panel_state.path.split("/", 1)[0],
+            top_level=self.runtime.panel_state.top_level_id
+            or self.runtime.panel_state.path.split("/", 1)[0],
             started_at=self.runtime.last_classified_started_at,
             ended_at=ended_at,
-            duration_seconds=max(0.0, (ended_at - self.runtime.last_classified_started_at).total_seconds()),
+            duration_seconds=max(
+                0.0,
+                (ended_at - self.runtime.last_classified_started_at).total_seconds(),
+            ),
         )
         save_span(self.paths.spans_log, span)
 

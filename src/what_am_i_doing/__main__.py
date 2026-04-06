@@ -4,6 +4,7 @@ import argparse
 import asyncio
 from datetime import UTC, datetime, timedelta
 import json
+import logging
 import os
 from pathlib import Path
 import shutil
@@ -41,21 +42,37 @@ from .wizard import run_init_wizard
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="waid")
-    parser.add_argument("--config", default=str(default_config_path()), help="Path to config file")
+    parser.add_argument(
+        "--config", default=str(default_config_path()), help="Path to config file"
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init_parser = subparsers.add_parser("init")
-    init_parser.add_argument("--force", action="store_true", help="Overwrite existing config")
+    init_parser.add_argument(
+        "--force", action="store_true", help="Overwrite existing config"
+    )
 
     subparsers.add_parser("run")
     refresh_parser = subparsers.add_parser("refresh")
-    refresh_parser.add_argument("--local", action="store_true", help="Refresh without D-Bus")
+    refresh_parser.add_argument(
+        "--local", action="store_true", help="Refresh without D-Bus"
+    )
 
     status_parser = subparsers.add_parser("status")
-    status_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    status_parser.add_argument(
+        "--json", action="store_true", help="Print machine-readable JSON"
+    )
 
     stats_parser = subparsers.add_parser("stats")
-    stats_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    stats_parser.add_argument(
+        "--json", action="store_true", help="Print machine-readable JSON"
+    )
+    stats_parser.add_argument(
+        "--period",
+        choices=["today", "week", "month", "all"],
+        default="today",
+        help="Time period to show (default: today)",
+    )
 
     subparsers.add_parser("doctor")
 
@@ -73,14 +90,18 @@ def build_parser() -> argparse.ArgumentParser:
     config_sub.add_parser("validate")
 
     extension_parser = subparsers.add_parser("extension")
-    extension_sub = extension_parser.add_subparsers(dest="extension_command", required=True)
+    extension_sub = extension_parser.add_subparsers(
+        dest="extension_command", required=True
+    )
     extension_sub.add_parser("install")
     extension_sub.add_parser("status")
 
     service_parser = subparsers.add_parser("service")
     service_sub = service_parser.add_subparsers(dest="service_command", required=True)
     install = service_sub.add_parser("install")
-    install.add_argument("--now", action="store_true", help="Enable and start after install")
+    install.add_argument(
+        "--now", action="store_true", help="Enable and start after install"
+    )
     service_sub.add_parser("uninstall")
     service_sub.add_parser("start")
     service_sub.add_parser("stop")
@@ -94,6 +115,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 async def _run_daemon(config_path: str) -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
     config = load_config(config_path)
     daemon = ActivityDaemon(config)
     await daemon.run()
@@ -115,22 +141,35 @@ async def _run_refresh(config_path: str, *, local: bool) -> None:
 
 async def _run_status(json_output: bool) -> None:
     payload: dict[str, object]
-    try:
-        payload = await daemon_status_payload()
-        payload["source"] = "dbus"
-    except (DBusError, RuntimeError, json.JSONDecodeError, ValueError):
-        status = load_status(AppPaths.default().status_json)
+    status = load_status(AppPaths.default().status_json)
+    if status is not None:
         payload = {
-            "kind": status.kind if status else "disconnected",
-            "path": status.path if status else None,
-            "top_level_id": status.top_level_id if status else None,
-            "top_level_label": status.top_level_label if status else None,
-            "icon_name": status.icon_name if status else DISCONNECTED_ICON,
-            "published_at": status.published_at.isoformat() if status else None,
-            "taxonomy_hash": status.taxonomy_hash if status else None,
-            "revision": status.revision if status else 0,
+            "kind": status.kind,
+            "path": status.path,
+            "top_level_id": status.top_level_id,
+            "top_level_label": status.top_level_label,
+            "icon_name": status.icon_name,
+            "published_at": status.published_at.isoformat(),
+            "taxonomy_hash": status.taxonomy_hash,
+            "revision": status.revision,
             "source": "state-file",
         }
+    else:
+        try:
+            payload = await daemon_status_payload()
+            payload["source"] = "dbus"
+        except (DBusError, RuntimeError, json.JSONDecodeError, ValueError):
+            payload = {
+                "kind": "disconnected",
+                "path": None,
+                "top_level_id": None,
+                "top_level_label": None,
+                "icon_name": DISCONNECTED_ICON,
+                "published_at": None,
+                "taxonomy_hash": None,
+                "revision": 0,
+                "source": "none",
+            }
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return
@@ -144,40 +183,72 @@ async def _run_status(json_output: bool) -> None:
     print(f"source: {payload['source']}")
 
 
-def _stats_payload() -> dict[str, dict[str, dict[str, float]]]:
+def _format_duration(seconds: float) -> str:
+    total_minutes = round(seconds / 60)
+    if total_minutes < 1:
+        return "<1m"
+    hours, minutes = divmod(total_minutes, 60)
+    if hours == 0:
+        return f"{minutes}m"
+    if minutes == 0:
+        return f"{hours}h"
+    return f"{hours}h {minutes}m"
+
+
+def _stats_payload(period: str) -> dict[str, Any]:
     spans = load_spans(AppPaths.default().spans_log)
     now = datetime.now(tz=UTC)
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    week_start = day_start - timedelta(days=day_start.weekday())
-    month_start = day_start.replace(day=1)
-    windows = {
+    window_start = {
+        "today": day_start,
+        "week": day_start - timedelta(days=day_start.weekday()),
+        "month": day_start.replace(day=1),
         "all": None,
-        "daily": day_start,
-        "weekly": week_start,
-        "monthly": month_start,
-    }
-    summary: dict[str, dict[str, dict[str, float]]] = {}
-    for label, window_start in windows.items():
-        by_top: dict[str, float] = {}
-        by_path: dict[str, float] = {}
-        for span in spans:
-            if window_start is not None and span.ended_at < window_start:
-                continue
-            by_top[span.top_level] = by_top.get(span.top_level, 0.0) + span.duration_seconds
-            by_path[span.path] = by_path.get(span.path, 0.0) + span.duration_seconds
-        summary[label] = {"by_top": by_top, "by_path": by_path}
-    return summary
+    }[period]
+
+    by_top: dict[str, float] = {}
+    by_path: dict[str, float] = {}
+    for span in spans:
+        if window_start is not None and span.ended_at < window_start:
+            continue
+        by_top[span.top_level] = by_top.get(span.top_level, 0.0) + span.duration_seconds
+        by_path[span.path] = by_path.get(span.path, 0.0) + span.duration_seconds
+    return {"period": period, "by_top": by_top, "by_path": by_path}
 
 
-def _run_stats(json_output: bool) -> None:
-    payload = _stats_payload()
+def _run_stats(json_output: bool, period: str) -> None:
+    payload = _stats_payload(period)
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return
-    for window, groups in payload.items():
-        print(f"[{window}]")
-        for path, seconds in sorted(groups["by_path"].items()):
-            print(f"{path}: {seconds:.0f}s")
+
+    by_top: dict[str, float] = payload["by_top"]
+    by_path: dict[str, float] = payload["by_path"]
+
+    period_label = {
+        "today": "Today",
+        "week": "This week",
+        "month": "This month",
+        "all": "All time",
+    }[period]
+    print(period_label)
+
+    total = sum(by_top.values())
+    col_width = 32
+    sorted_tops = sorted(by_top.items(), key=lambda x: x[1], reverse=True)
+    for top, top_secs in sorted_tops:
+        dur = _format_duration(top_secs)
+        print(f"  {top:<{col_width - 2}}{dur:>6}")
+        subs = [
+            (p, s) for p, s in by_path.items() if p != top and p.startswith(top + "/")
+        ]
+        for path, secs in sorted(subs, key=lambda x: x[1], reverse=True):
+            label = f"  {path}"
+            dur = _format_duration(secs)
+            print(f"  {label:<{col_width - 2}}{dur:>6}")
+
+    print(f"  {'─' * (col_width + 4)}")
+    print(f"  {'Total':<{col_width - 2}}{_format_duration(total):>6}")
 
 
 def _run_init(config_path: str, *, force: bool) -> None:
@@ -234,8 +305,12 @@ def _run_extension_command(args: argparse.Namespace) -> None:
         copy_resource_tree("gnome", destination=EXTENSION_DIR)
         print(f"installed extension to {EXTENSION_DIR}")
         print(f"enable with: gnome-extensions enable {EXTENSION_UUID}")
-        print("if GNOME says the extension does not exist yet, log out and back in first, then run the enable command again")
-        print("if GNOME marks the extension as out of date after an upgrade, log out and back in so Shell reloads the new metadata")
+        print(
+            "if GNOME says the extension does not exist yet, log out and back in first, then run the enable command again"
+        )
+        print(
+            "if GNOME marks the extension as out of date after an upgrade, log out and back in so Shell reloads the new metadata"
+        )
         return
     if args.extension_command == "status":
         print(f"extension dir: {EXTENSION_DIR}")
@@ -285,7 +360,15 @@ def _run_service_command(args: argparse.Namespace) -> None:
     if args.service_command == "logs":
         if args.follow:
             subprocess.run(
-                ["journalctl", "--user", "-u", SERVICE_NAME, "-n", str(args.lines), "-f"],
+                [
+                    "journalctl",
+                    "--user",
+                    "-u",
+                    SERVICE_NAME,
+                    "-n",
+                    str(args.lines),
+                    "-f",
+                ],
                 check=False,
             )
             return
@@ -307,11 +390,15 @@ def _run_doctor(config_path: str) -> None:
         config = load_config(path)
         checks.append(("config-parse", "ok"))
         for name, tool in {**config.tools.context, **config.tools.actions}.items():
-            checks.append((f"tool:{name}", "ok" if shutil.which(tool.run[0]) else "missing"))
+            checks.append(
+                (f"tool:{name}", "ok" if shutil.which(tool.run[0]) else "missing")
+            )
     except Exception as exc:
         checks.append(("config-parse", f"error: {exc}"))
     checks.append(("gdbus", "ok" if shutil.which("gdbus") else "missing"))
-    checks.append(("gnome-extensions", "ok" if shutil.which("gnome-extensions") else "missing"))
+    checks.append(
+        ("gnome-extensions", "ok" if shutil.which("gnome-extensions") else "missing")
+    )
     checks.append(("systemctl", "ok" if shutil.which("systemctl") else "missing"))
     checks.append(("extension", "ok" if EXTENSION_DIR.exists() else "missing"))
     checks.append(("service-unit", "ok" if unit_path().exists() else "missing"))
@@ -357,7 +444,7 @@ def main() -> None:
         asyncio.run(_run_status(args.json))
         return
     if args.command == "stats":
-        _run_stats(args.json)
+        _run_stats(args.json, args.period)
         return
     if args.command == "doctor":
         _run_doctor(args.config)

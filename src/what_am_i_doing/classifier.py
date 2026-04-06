@@ -5,11 +5,14 @@ from .constants import PANEL_KIND_UNCLASSIFIED
 from .debug import DebugLogger
 from .defaults import CLASSIFIER_BASE_PROMPT
 from .llm import LLMError, OpenAICompatibleClient
-from .models import ProviderState, Taxonomy
+from .models import AppPaths, CorrectionRecord, ProviderState, Taxonomy
+from .storage import load_recent_corrections
 
 
 class EventClassifier:
-    def __init__(self, client: OpenAICompatibleClient, debug: DebugLogger | None = None) -> None:
+    def __init__(
+        self, client: OpenAICompatibleClient, debug: DebugLogger | None = None
+    ) -> None:
         self.client = client
         self.debug = debug
 
@@ -20,9 +23,15 @@ class EventClassifier:
         taxonomy: Taxonomy,
         previous_path: str | None,
     ) -> str:
+        paths = AppPaths.from_state_dir(config.state_dir)
+        corrections = load_recent_corrections(
+            paths.corrections_log, config.classifier.correction_retention_days
+        )
         allowed_paths = sorted(taxonomy.allowed_paths())
         valid_outputs = allowed_paths + [PANEL_KIND_UNCLASSIFIED]
-        base_prompt = self._build_prompt(config, state, taxonomy, previous_path, valid_outputs)
+        base_prompt = self._build_prompt(
+            config, state, taxonomy, previous_path, valid_outputs, corrections
+        )
         last_invalid: str | None = None
         for attempt in range(config.classifier.retry_count + 1):
             prompt = base_prompt
@@ -45,7 +54,7 @@ class EventClassifier:
                         prompt=prompt,
                     )
                 result = self.client.chat(
-                    config.model,
+                    config.classifier_model,
                     [{"role": "user", "content": prompt}],
                 ).strip()
             except LLMError:
@@ -71,14 +80,34 @@ class EventClassifier:
         taxonomy: Taxonomy,
         previous_path: str | None,
         valid_outputs: list[str],
+        corrections: list[CorrectionRecord] | None = None,
     ) -> str:
         sections = [
             CLASSIFIER_BASE_PROMPT.strip(),
             "Allowed outputs:\n" + "\n".join(f"- {path}" for path in valid_outputs),
             "Taxonomy details:\n" + taxonomy.describe(),
+        ]
+
+        if corrections:
+            correction_lines = []
+            for c in corrections[-10:]:  # Last 10 corrections
+                win = c.state.focused_window
+                if win:
+                    correction_lines.append(
+                        f"- Title: \"{win.title}\", Class: \"{win.wm_class}\" -> "
+                        f"classified as \"{c.previous_path or 'unknown'}\", "
+                        f"corrected to \"{c.manual_path}\""
+                    )
+            if correction_lines:
+                sections.append(
+                    "Recent manual corrections by user (learn from these):\n"
+                    + "\n".join(correction_lines)
+                )
+
+        sections.extend([
             f"Previous path: {previous_path or 'none'}",
             "Current event:\n" + self._state_summary(state),
-        ]
+        ])
         rendered_instructions = config.render_classifier_instructions().strip()
         if rendered_instructions:
             sections.append("User instructions:\n" + rendered_instructions)
@@ -94,10 +123,11 @@ class EventClassifier:
             f"title: {window.title}",
             f"wm_class: {window.wm_class}",
             f"wm_class_instance: {window.wm_class_instance or ''}",
-            f"workspace: {window.workspace}",
             f"workspace_name: {window.workspace_name or ''}",
-            f"monitor: {window.monitor or ''}",
+            f"active_workspace_name: {state.active_workspace_name or ''}",
             f"fullscreen: {window.fullscreen}",
             f"maximized: {window.maximized}",
+            f"screen_locked: {state.screen_locked}",
+            f"idle_time_seconds: {state.idle_time_seconds or 0}",
         ]
         return "\n".join(parts)

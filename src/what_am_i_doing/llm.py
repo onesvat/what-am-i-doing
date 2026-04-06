@@ -37,7 +37,7 @@ class OpenAICompatibleClient:
         data = json.dumps(payload).encode("utf-8")
         endpoint = model.base_url.rstrip("/") + "/chat/completions"
         headers = {"Content-Type": "application/json"}
-        api_key = os.environ.get(model.api_key_env, "").strip() if model.api_key_env else ""
+        api_key = model.api_key.strip() or (os.environ.get(model.api_key_env, "").strip() if model.api_key_env else "")
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         if self.debug is not None:
@@ -86,8 +86,10 @@ class OpenAICompatibleClient:
             "type": "json_schema",
             "json_schema": {
                 "name": "waid_response",
+                "strict": False,
                 "schema": {
                     "type": "object",
+                    "properties": {},
                     "additionalProperties": True,
                 },
             },
