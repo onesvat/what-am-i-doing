@@ -52,54 +52,55 @@ class TaxonomyGenerator:
                     self.debug.log("generator_error", attempt=attempt, error=str(exc))
         raise RuntimeError(f"generator failed: {last_error}") from last_error
 
+    def _build_prompt(
+        self,
+        config: AppConfig,
+        context_outputs: dict[str, str],
+        rendered_instructions: str,
+    ) -> str:
+        category_lines = [
+            f"- {category.name}: {category.note or 'no extra note'}"
+            for category in config.generator.categories
+        ]
+        action_tool_lines = [
+            f"- {name}: {' '.join(tool.run)}"
+            for name, tool in sorted(config.tools.actions.items())
+        ]
+        context_blocks = [
+            f"## {name}\n{output.strip() or '<empty>'}"
+            for name, output in sorted(context_outputs.items())
+        ]
 
-def _build_prompt(
-    self,
-    config: AppConfig,
-    context_outputs: dict[str, str],
-    rendered_instructions: str,
-) -> str:
-    category_lines = [
-        f"- {category.name}: {category.note or 'no extra note'}"
-        for category in config.generator.categories
-    ]
-    action_tool_lines = [
-        f"- {name}: {' '.join(tool.run)}"
-        for name, tool in sorted(config.tools.actions.items())
-    ]
-    context_blocks = [
-        f"## {name}\n{output.strip() or '<empty>'}"
-        for name, output in sorted(context_outputs.items())
-    ]
+        learned_lines: list[str] = []
+        for rule in config.learned:
+            example_text = ""
+            if rule.window_example:
+                example_parts = []
+                if rule.window_example.wm_class:
+                    example_parts.append(f"wm_class={rule.window_example.wm_class}")
+                if rule.window_example.title:
+                    example_parts.append(f"title='{rule.window_example.title[:30]}'")
+                if rule.window_example.workspace_name:
+                    example_parts.append(
+                        f"workspace={rule.window_example.workspace_name}"
+                    )
+                if example_parts:
+                    example_text = f" (example: {', '.join(example_parts)})"
+            learned_lines.append(f"- {rule.hint}{example_text}")
 
-    learned_lines: list[str] = []
-    for rule in config.learned:
-        example_text = ""
-        if rule.window_example:
-            example_parts = []
-            if rule.window_example.wm_class:
-                example_parts.append(f"wm_class={rule.window_example.wm_class}")
-            if rule.window_example.title:
-                example_parts.append(f"title='{rule.window_example.title[:30]}'")
-            if rule.window_example.workspace_name:
-                example_parts.append(f"workspace={rule.window_example.workspace_name}")
-            if example_parts:
-                example_text = f" (example: {', '.join(example_parts)})"
-        learned_lines.append(f"- {rule.hint}{example_text}")
+        sections = [
+            GENERATOR_BASE_PROMPT.strip(),
+            "Broad category hints:\n"
+            + ("\n".join(category_lines) if category_lines else "- none"),
+            "Action tool inventory:\n"
+            + ("\n".join(action_tool_lines) if action_tool_lines else "- none"),
+            "Context outputs:\n"
+            + ("\n\n".join(context_blocks) if context_blocks else "None."),
+        ]
 
-    sections = [
-        GENERATOR_BASE_PROMPT.strip(),
-        "Broad category hints:\n"
-        + ("\n".join(category_lines) if category_lines else "- none"),
-        "Action tool inventory:\n"
-        + ("\n".join(action_tool_lines) if action_tool_lines else "- none"),
-        "Context outputs:\n"
-        + ("\n\n".join(context_blocks) if context_blocks else "None."),
-    ]
+        if learned_lines:
+            sections.append("Learned patterns:\n" + "\n".join(learned_lines))
 
-    if learned_lines:
-        sections.append("Learned patterns:\n" + "\n".join(learned_lines))
-
-    if rendered_instructions:
-        sections.append("User instructions:\n" + rendered_instructions)
-    return "\n\n".join(sections)
+        if rendered_instructions:
+            sections.append("User instructions:\n" + rendered_instructions)
+        return "\n\n".join(sections)
