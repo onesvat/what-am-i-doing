@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from typing import Any
-from urllib import request
+from urllib import error, request
 
 from .config import ModelConfig
 from .debug import DebugLogger
@@ -33,7 +33,7 @@ class OpenAICompatibleClient:
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
         if json_mode:
-            payload["response_format"] = {"type": "json_object"}
+            payload["response_format"] = self._json_response_format()
         data = json.dumps(payload).encode("utf-8")
         endpoint = model.base_url.rstrip("/") + "/chat/completions"
         headers = {"Content-Type": "application/json"}
@@ -53,6 +53,17 @@ class OpenAICompatibleClient:
         try:
             with request.urlopen(req, timeout=model.timeout_seconds) as resp:
                 body = resp.read().decode("utf-8")
+        except error.HTTPError as exc:  # pragma: no cover - exercised in integration
+            body = exc.read().decode("utf-8", errors="replace")
+            if self.debug is not None:
+                self.debug.log(
+                    "llm_error",
+                    model=model.name,
+                    endpoint=endpoint,
+                    error=str(exc),
+                    body=body,
+                )
+            raise LLMError(f"{exc}: {body}") from exc
         except Exception as exc:  # pragma: no cover - exercised in integration
             if self.debug is not None:
                 self.debug.log("llm_error", model=model.name, endpoint=endpoint, error=str(exc))
@@ -69,3 +80,15 @@ class OpenAICompatibleClient:
         if self.debug is not None:
             self.debug.log("llm_response", model=model.name, content=content.strip())
         return content.strip()
+
+    def _json_response_format(self) -> dict[str, Any]:
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "waid_response",
+                "schema": {
+                    "type": "object",
+                    "additionalProperties": True,
+                },
+            },
+        }
