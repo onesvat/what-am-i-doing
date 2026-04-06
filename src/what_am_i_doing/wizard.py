@@ -111,7 +111,7 @@ def run_init_wizard() -> InitAnswers:
     ).strip()
     classifier_instructions = prompt(
         "Classifier extra instructions: ",
-        default="Prefer the most specific category. Use unknown when unclear.",
+        default="Prefer the most specific category. Use unclassified when no category fits.",
     ).strip()
     classifier_params = _collect_params()
     return InitAnswers(

@@ -27,7 +27,7 @@ class FakeClient:
 
 class ClassifierTest(unittest.TestCase):
     def test_retry_then_fallback(self) -> None:
-        taxonomy = Taxonomy(categories=[TaxonomyNode(name="unknown", description="Fallback")])
+        taxonomy = Taxonomy(categories=[TaxonomyNode(name="coding", description="Coding work")])
         config = AppConfig.model_validate(
             {
                 "version": 1,
@@ -44,7 +44,7 @@ class ClassifierTest(unittest.TestCase):
         client = FakeClient(["wrong", "still wrong"])
         classifier = EventClassifier(client)
         result = asyncio.run(classifier.classify(config, state, taxonomy, None))
-        self.assertEqual("unknown", result)
+        self.assertEqual("unclassified", result)
         self.assertEqual(2, len(client.calls))
         self.assertIn("Mode: focused", client.calls[0])
 

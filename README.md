@@ -159,6 +159,24 @@ Debug entries are written to:
 
 This includes provider state, rendered prompts, raw LLM responses, classifier results, and tool execution output.
 
+For a human-readable view, use:
+
+```bash
+waid debug logs
+```
+
+Follow live debug output:
+
+```bash
+waid debug logs --follow
+```
+
+If you still want the raw JSON lines:
+
+```bash
+waid debug logs --json
+```
+
 ## The Config, Explained Simply
 
 The config is small on purpose.
@@ -191,7 +209,7 @@ classifier:
   retry_count: 2
   instructions: |
     Prefer the most specific category.
-    Use unknown when unclear.
+    Use unclassified when no category fits.
   params:
     work_mode: focused
 
@@ -231,8 +249,6 @@ It:
 - reads your broad categories
 - runs context commands
 - builds a runtime category tree
-
-`unknown` is added automatically, so you do not need to define it.
 
 ### `classifier`
 
@@ -428,7 +444,7 @@ Make the classifier instructions shorter and stricter.
 Good rule:
 
 - return only one path
-- prefer `unknown` when unsure
+- use `unclassified` only when no category fits
 
 ## Current Limits
 

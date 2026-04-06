@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .config import AppConfig
+from .constants import PANEL_KIND_UNCLASSIFIED
 from .debug import DebugLogger
 from .defaults import CLASSIFIER_BASE_PROMPT
 from .llm import LLMError, OpenAICompatibleClient
@@ -19,8 +20,9 @@ class EventClassifier:
         taxonomy: Taxonomy,
         previous_path: str | None,
     ) -> str:
-        allowed = sorted(taxonomy.allowed_paths())
-        base_prompt = self._build_prompt(config, state, taxonomy, previous_path, allowed)
+        allowed_paths = sorted(taxonomy.allowed_paths())
+        valid_outputs = allowed_paths + [PANEL_KIND_UNCLASSIFIED]
+        base_prompt = self._build_prompt(config, state, taxonomy, previous_path, valid_outputs)
         last_invalid: str | None = None
         for attempt in range(config.classifier.retry_count + 1):
             prompt = base_prompt
@@ -30,7 +32,7 @@ class EventClassifier:
                     f"Attempt: {attempt}\n"
                     f"Previous answer: {last_invalid}\n"
                     "Valid choices are:\n"
-                    + "\n".join(f"- {path}" for path in allowed)
+                    + "\n".join(f"- {path}" for path in valid_outputs)
                     + "\nReturn only one valid path exactly."
                 )
             try:
@@ -39,7 +41,7 @@ class EventClassifier:
                         "classifier_attempt",
                         attempt=attempt,
                         previous_path=previous_path,
-                        allowed=allowed,
+                        allowed=valid_outputs,
                         prompt=prompt,
                     )
                 result = self.client.chat(
@@ -50,17 +52,17 @@ class EventClassifier:
                 result = ""
             if self.debug is not None:
                 self.debug.log("classifier_result", attempt=attempt, result=result)
-            if result in taxonomy.allowed_paths():
+            if result in valid_outputs:
                 return result
             last_invalid = result or "<empty>"
         if self.debug is not None:
             self.debug.log(
                 "classifier_fallback",
                 previous_path=previous_path,
-                fallback=config.fallback_category,
+                fallback=PANEL_KIND_UNCLASSIFIED,
                 last_invalid=last_invalid,
             )
-        return config.fallback_category
+        return PANEL_KIND_UNCLASSIFIED
 
     def _build_prompt(
         self,
@@ -68,11 +70,11 @@ class EventClassifier:
         state: ProviderState,
         taxonomy: Taxonomy,
         previous_path: str | None,
-        allowed: list[str],
+        valid_outputs: list[str],
     ) -> str:
         sections = [
             CLASSIFIER_BASE_PROMPT.strip(),
-            "Allowed paths:\n" + "\n".join(f"- {path}" for path in allowed),
+            "Allowed outputs:\n" + "\n".join(f"- {path}" for path in valid_outputs),
             "Taxonomy details:\n" + taxonomy.describe(),
             f"Previous path: {previous_path or 'none'}",
             "Current event:\n" + self._state_summary(state),

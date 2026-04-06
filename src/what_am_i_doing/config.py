@@ -8,7 +8,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 import yaml
 
-from .constants import CONFIG_PATH, FALLBACK_CATEGORY, STATE_DIR
+from .constants import CONFIG_PATH, RESERVED_CATEGORY_NAMES, STATE_DIR
 from .models import Taxonomy, TaxonomyNode
 
 
@@ -37,6 +37,8 @@ class GeneratorCategorySeed(BaseModel):
         value = value.strip()
         if not value or "/" in value:
             raise ValueError("category names must be non-empty and cannot contain '/'")
+        if value in RESERVED_CATEGORY_NAMES:
+            raise ValueError(f"category name is reserved: {value}")
         return value
 
 
@@ -113,17 +115,11 @@ class AppConfig(BaseModel):
         names = [category.name for category in self.generator.categories]
         if len(names) != len(set(names)):
             raise ValueError("generator category names must be unique")
-        if FALLBACK_CATEGORY not in names:
-            self.generator.categories.append(GeneratorCategorySeed(name=FALLBACK_CATEGORY))
         return self
 
     @property
     def state_dir(self) -> Path:
         return STATE_DIR
-
-    @property
-    def fallback_category(self) -> str:
-        return FALLBACK_CATEGORY
 
     def seed_taxonomy(self) -> Taxonomy:
         categories: list[TaxonomyNode] = []
@@ -137,7 +133,34 @@ class AppConfig(BaseModel):
                     children=[],
                 )
             )
-        return Taxonomy(categories=categories).ensure_fallback()
+        return Taxonomy(categories=categories)
+
+    def normalize_generated_taxonomy(self, taxonomy: Taxonomy) -> Taxonomy:
+        existing = {node.name: node for node in taxonomy.categories}
+        categories: list[TaxonomyNode] = []
+        for category in self.generator.categories:
+            node = existing.get(category.name)
+            if node is None:
+                categories.append(
+                    TaxonomyNode(
+                        name=category.name,
+                        description=category.note or f"Broad {category.name} activity.",
+                        icon=_default_icon_for(category.name),
+                        tool_calls=[],
+                        children=[],
+                    )
+                )
+                continue
+            categories.append(
+                TaxonomyNode(
+                    name=node.name,
+                    description=node.description or category.note or f"Broad {node.name} activity.",
+                    icon=_default_icon_for(node.name),
+                    tool_calls=node.tool_calls,
+                    children=node.children,
+                )
+            )
+        return Taxonomy(categories=categories)
 
     def render_generator_instructions(self, variables: dict[str, str]) -> str:
         return interpolate_text(self.generator.instructions, variables)
@@ -192,7 +215,7 @@ def build_minimal_config(
     categories = [
         {"name": name, "note": note}
         for name, note in category_notes.items()
-        if name != FALLBACK_CATEGORY
+        if name not in RESERVED_CATEGORY_NAMES
     ]
     return AppConfig.model_validate(
         {
@@ -229,6 +252,5 @@ def _default_icon_for(name: str) -> str:
         "planning": "view-calendar-symbolic",
         "surfing": "web-browser-symbolic",
         "adult": "dialog-warning-symbolic",
-        FALLBACK_CATEGORY: "help-about-symbolic",
     }
     return icons.get(name, "applications-system-symbolic")

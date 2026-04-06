@@ -25,7 +25,7 @@ classifier:
   retry_count: 2
   instructions: |
     Prefer the most specific category.
-    Use unknown when unclear.
+    Use unclassified when no category fits.
   params:
     work_mode: focused
 

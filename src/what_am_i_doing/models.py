@@ -5,11 +5,19 @@ from datetime import UTC, datetime
 from hashlib import sha256
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .constants import FALLBACK_CATEGORY, STATE_DIR
+from .constants import (
+    DISCONNECTED_ICON,
+    PANEL_KIND_CLASSIFIED,
+    PANEL_KIND_DISCONNECTED,
+    PANEL_KIND_UNCLASSIFIED,
+    PANEL_SCHEMA_VERSION,
+    STATE_DIR,
+    UNCLASSIFIED_ICON,
+)
 
 
 class ToolCall(BaseModel):
@@ -49,21 +57,6 @@ class Taxonomy(BaseModel):
         if len(names) != len(set(names)):
             raise ValueError("duplicate top-level categories")
         return self
-
-    def ensure_fallback(self, fallback: str = FALLBACK_CATEGORY) -> "Taxonomy":
-        if fallback in self.allowed_paths():
-            return self
-        categories = list(self.categories)
-        categories.append(
-            TaxonomyNode(
-                name=fallback,
-                description="Reserved fallback category.",
-                icon="help-about-symbolic",
-                tool_calls=[],
-                children=[],
-            )
-        )
-        return Taxonomy(categories=categories)
 
     def allowed_paths(self) -> set[str]:
         result: set[str] = set()
@@ -147,14 +140,115 @@ class ProviderState(BaseModel):
     timestamp: datetime
 
 
-class StatusRecord(BaseModel):
+@dataclass(slots=True)
+class ProviderSnapshot:
+    revision: int
+    state: ProviderState
+
+
+class PanelStateRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    current_path: str
-    top_level: str
-    icon: str | None = None
-    updated_at: datetime
-    taxonomy_hash: str
+    revision: int = 0
+    schema_version: int = PANEL_SCHEMA_VERSION
+    kind: Literal[
+        PANEL_KIND_CLASSIFIED,
+        PANEL_KIND_UNCLASSIFIED,
+        PANEL_KIND_DISCONNECTED,
+    ]
+    top_level_id: str | None = None
+    top_level_label: str | None = None
+    icon_name: str
+    path: str | None = None
+    published_at: datetime
+    taxonomy_hash: str | None = None
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> "PanelStateRecord":
+        if self.schema_version != PANEL_SCHEMA_VERSION:
+            raise ValueError(f"unsupported panel state schema version: {self.schema_version}")
+        if self.kind == PANEL_KIND_CLASSIFIED:
+            if not self.top_level_id or not self.top_level_label or not self.path or not self.taxonomy_hash:
+                raise ValueError("classified panel state must include top-level, path, and taxonomy hash")
+        else:
+            if self.path is not None:
+                raise ValueError("non-classified panel state cannot include a path")
+            if self.kind == PANEL_KIND_DISCONNECTED and self.taxonomy_hash is not None:
+                raise ValueError("disconnected panel state cannot include taxonomy hash")
+        return self
+
+    @classmethod
+    def classified(
+        cls,
+        *,
+        revision: int,
+        path: str,
+        top_level_id: str,
+        top_level_label: str,
+        icon_name: str,
+        published_at: datetime,
+        taxonomy_hash: str,
+    ) -> "PanelStateRecord":
+        return cls(
+            revision=revision,
+            kind=PANEL_KIND_CLASSIFIED,
+            top_level_id=top_level_id,
+            top_level_label=top_level_label,
+            icon_name=icon_name,
+            path=path,
+            published_at=published_at,
+            taxonomy_hash=taxonomy_hash,
+        )
+
+    @classmethod
+    def unclassified(
+        cls,
+        *,
+        revision: int,
+        published_at: datetime,
+        taxonomy_hash: str | None,
+    ) -> "PanelStateRecord":
+        return cls(
+            revision=revision,
+            kind=PANEL_KIND_UNCLASSIFIED,
+            top_level_id=None,
+            top_level_label=None,
+            icon_name=UNCLASSIFIED_ICON,
+            path=None,
+            published_at=published_at,
+            taxonomy_hash=taxonomy_hash,
+        )
+
+    @classmethod
+    def disconnected(
+        cls,
+        *,
+        revision: int,
+        published_at: datetime,
+    ) -> "PanelStateRecord":
+        return cls(
+            revision=revision,
+            kind=PANEL_KIND_DISCONNECTED,
+            top_level_id=None,
+            top_level_label=None,
+            icon_name=DISCONNECTED_ICON,
+            path=None,
+            published_at=published_at,
+            taxonomy_hash=None,
+        )
+
+    def payload(self) -> dict[str, Any]:
+        return self.model_dump(mode="json", exclude={"revision"})
+
+    def payload_json(self) -> str:
+        return json.dumps(self.payload(), sort_keys=True)
+
+    def same_value(self, other: "PanelStateRecord | None") -> bool:
+        if other is None:
+            return False
+        left = self.model_dump(mode="json", exclude={"revision", "published_at"})
+        right = other.model_dump(mode="json", exclude={"revision", "published_at"})
+        return left == right
 
 
 class SpanRecord(BaseModel):

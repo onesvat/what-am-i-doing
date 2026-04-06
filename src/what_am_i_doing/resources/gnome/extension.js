@@ -17,16 +17,22 @@ const TRACKER_OBJECT_PATH = '/org/waid/WindowTracker';
 const DAEMON_BUS_NAME = 'org.waid.Daemon';
 const DAEMON_OBJECT_PATH = '/org/waid/Daemon';
 const DAEMON_INTERFACE = 'org.waid.Daemon';
-const FALLBACK_TOP_LEVEL = 'unknown';
-const FALLBACK_ICON = 'help-about-symbolic';
+
+const PANEL_KIND_CLASSIFIED = 'classified';
+const PANEL_KIND_UNCLASSIFIED = 'unclassified';
+const PANEL_KIND_DISCONNECTED = 'disconnected';
+const UNCLASSIFIED_ICON = 'help-about-symbolic';
+const DISCONNECTED_ICON = 'network-offline-symbolic';
 
 const TRACKER_IFACE = `
 <node>
   <interface name="${TRACKER_BUS_NAME}">
-    <method name="GetCurrentState">
+    <method name="GetSnapshot">
+      <arg name="revision" type="u" direction="out"/>
       <arg name="state_json" type="s" direction="out"/>
     </method>
     <signal name="StateChanged">
+      <arg name="revision" type="u"/>
       <arg name="state_json" type="s"/>
     </signal>
   </interface>
@@ -37,8 +43,8 @@ class StatusIndicator extends PanelMenu.Button {
     _init() {
         super._init(0.0, 'waid', false);
         this._box = new St.BoxLayout({style_class: 'panel-status-menu-box'});
-        this._icon = new St.Icon({icon_name: 'help-about-symbolic', style_class: 'system-status-icon'});
-        this._label = new St.Label({text: 'unknown', y_align: Clutter.ActorAlign.CENTER});
+        this._icon = new St.Icon({icon_name: DISCONNECTED_ICON, style_class: 'system-status-icon'});
+        this._label = new St.Label({text: PANEL_KIND_DISCONNECTED, y_align: Clutter.ActorAlign.CENTER});
         this._box.add_child(this._icon);
         this._box.add_child(this._label);
         this.add_child(this._box);
@@ -47,9 +53,9 @@ class StatusIndicator extends PanelMenu.Button {
         this.menu.addMenuItem(this._refreshItem);
     }
 
-    setStatus(topLevel, iconName) {
-        this._icon.icon_name = iconName || 'help-about-symbolic';
-        this._label.text = topLevel || 'unknown';
+    setStatus(label, iconName) {
+        this._icon.icon_name = iconName || DISCONNECTED_ICON;
+        this._label.text = label || PANEL_KIND_DISCONNECTED;
         this._label.visible = true;
     }
 
@@ -63,9 +69,14 @@ export default class WaidExtension extends Extension {
         this._enabled = true;
         this._signals = [];
         this._daemonProxy = null;
-        this._daemonSignalId = 0;
+        this._daemonPropertiesId = 0;
         this._daemonWatchId = 0;
+        this._connectingDaemon = false;
         this._proxyGeneration = 0;
+        this._trackerRevision = 0;
+        this._trackerStateJson = '';
+        this._updateTrackerSnapshot({emitSignal: false});
+
         this._dbusImpl = Gio.DBusExportedObject.wrapJSObject(TRACKER_IFACE, this);
         this._dbusImpl.export(Gio.DBus.session, TRACKER_OBJECT_PATH);
         this._nameOwnerId = Gio.bus_own_name_on_connection(
@@ -79,7 +90,7 @@ export default class WaidExtension extends Extension {
         this._indicator = new StatusIndicator();
         this._indicator.onRefresh(() => this._requestRefresh());
         Main.panel.addToStatusArea(this.uuid, this._indicator);
-        this._indicator.setStatus(FALLBACK_TOP_LEVEL, FALLBACK_ICON);
+        this._setDisconnected();
 
         this._signals.push([global.display, global.display.connect('notify::focus-window', () => this._emitStateChanged())]);
         this._signals.push([global.workspace_manager, global.workspace_manager.connect('active-workspace-changed', () => this._emitStateChanged())]);
@@ -120,8 +131,8 @@ export default class WaidExtension extends Extension {
         }
     }
 
-    GetCurrentState() {
-        return JSON.stringify(this._buildState());
+    GetSnapshot() {
+        return [this._trackerRevision, this._trackerStateJson];
     }
 
     _buildState() {
@@ -205,13 +216,29 @@ export default class WaidExtension extends Extension {
         };
     }
 
+    _updateTrackerSnapshot({emitSignal}) {
+        const payload = JSON.stringify(this._buildState());
+        if (this._trackerRevision === 0) {
+            this._trackerRevision = 1;
+            this._trackerStateJson = payload;
+            return;
+        }
+        if (payload === this._trackerStateJson) {
+            return;
+        }
+        this._trackerRevision += 1;
+        this._trackerStateJson = payload;
+        if (emitSignal && this._enabled && this._dbusImpl) {
+            this._dbusImpl.emit_signal('StateChanged', new GLib.Variant('(us)', [this._trackerRevision, payload]));
+        }
+    }
+
     _emitStateChanged() {
         if (!this._enabled || !this._dbusImpl) {
             return;
         }
         try {
-            const payload = JSON.stringify(this._buildState());
-            this._dbusImpl.emit_signal('StateChanged', new GLib.Variant('(s)', [payload]));
+            this._updateTrackerSnapshot({emitSignal: true});
         } catch (error) {
             logError(error, `${this.uuid}: failed to emit state change`);
         }
@@ -228,6 +255,10 @@ export default class WaidExtension extends Extension {
     }
 
     _setupDaemonProxy() {
+        if (this._connectingDaemon) {
+            return;
+        }
+        this._connectingDaemon = true;
         const generation = ++this._proxyGeneration;
         Gio.DBusProxy.new_for_bus(
             Gio.BusType.SESSION,
@@ -238,6 +269,7 @@ export default class WaidExtension extends Extension {
             DAEMON_INTERFACE,
             null,
             (_source, result) => {
+                this._connectingDaemon = false;
                 if (!this._enabled || generation !== this._proxyGeneration) {
                     return;
                 }
@@ -245,11 +277,10 @@ export default class WaidExtension extends Extension {
                     const proxy = Gio.DBusProxy.new_for_bus_finish(result);
                     this._teardownDaemonProxy();
                     this._daemonProxy = proxy;
-                    this._daemonSignalId = proxy.connectSignal('StatusChanged', (_proxy, _sender, params) => {
-                        const statusJson = params.deepUnpack()[0];
-                        this._applyStatus(statusJson);
+                    this._daemonPropertiesId = proxy.connect('g-properties-changed', () => {
+                        this._applyCachedPanelState();
                     });
-                    this._updateIndicatorFromDaemon();
+                    this._applyCachedPanelState();
                 } catch (error) {
                     logError(error, `${this.uuid}: failed to connect to daemon`);
                     this._handleDaemonVanished();
@@ -259,45 +290,70 @@ export default class WaidExtension extends Extension {
     }
 
     _teardownDaemonProxy() {
-        if (this._daemonProxy && this._daemonSignalId) {
+        if (this._daemonProxy && this._daemonPropertiesId) {
             try {
-                this._daemonProxy.disconnectSignal(this._daemonSignalId);
+                this._daemonProxy.disconnect(this._daemonPropertiesId);
             } catch (_) {
             }
         }
-        this._daemonSignalId = 0;
+        this._daemonPropertiesId = 0;
         this._daemonProxy = null;
     }
 
     _handleDaemonVanished() {
         this._proxyGeneration += 1;
+        this._connectingDaemon = false;
         this._teardownDaemonProxy();
-        if (this._indicator) {
-            this._indicator.setStatus(FALLBACK_TOP_LEVEL, FALLBACK_ICON);
-        }
+        this._setDisconnected();
     }
 
-    _updateIndicatorFromDaemon() {
+    _cachedStringProperty(name) {
         if (!this._daemonProxy) {
+            return '';
+        }
+        const value = this._daemonProxy.get_cached_property(name);
+        return value ? value.deepUnpack() : '';
+    }
+
+    _cachedUintProperty(name) {
+        if (!this._daemonProxy) {
+            return 0;
+        }
+        const value = this._daemonProxy.get_cached_property(name);
+        return value ? Number(value.deepUnpack()) : 0;
+    }
+
+    _applyCachedPanelState() {
+        const kind = this._cachedStringProperty('PanelKind');
+        const label = this._cachedStringProperty('PanelTopLevelLabel');
+        const topLevelId = this._cachedStringProperty('PanelTopLevelId');
+        const iconName = this._cachedStringProperty('PanelIconName');
+        const publishedAt = this._cachedStringProperty('PanelPublishedAt');
+        this._panelRevision = this._cachedUintProperty('PanelRevision');
+
+        if (!kind || !iconName || !publishedAt) {
+            this._setDisconnected();
             return;
         }
-        this._daemonProxy.call(
-            'GetStatus',
-            null,
-            Gio.DBusCallFlags.NONE,
-            -1,
-            null,
-            (_proxy, result) => {
-                try {
-                    const value = this._daemonProxy.call_finish(result);
-                    const statusJson = value.deepUnpack()[0];
-                    this._applyStatus(statusJson);
-                } catch (error) {
-                    logError(error, `${this.uuid}: failed to fetch daemon status`);
-                    this._handleDaemonVanished();
-                }
-            }
-        );
+        if (kind === PANEL_KIND_CLASSIFIED) {
+            this._indicator.setStatus(label || topLevelId || PANEL_KIND_CLASSIFIED, iconName);
+            return;
+        }
+        if (kind === PANEL_KIND_UNCLASSIFIED) {
+            this._indicator.setStatus(PANEL_KIND_UNCLASSIFIED, iconName || UNCLASSIFIED_ICON);
+            return;
+        }
+        if (kind === PANEL_KIND_DISCONNECTED) {
+            this._indicator.setStatus(PANEL_KIND_DISCONNECTED, iconName || DISCONNECTED_ICON);
+            return;
+        }
+        this._setDisconnected();
+    }
+
+    _setDisconnected() {
+        if (this._indicator) {
+            this._indicator.setStatus(PANEL_KIND_DISCONNECTED, DISCONNECTED_ICON);
+        }
     }
 
     _requestRefresh() {
@@ -318,18 +374,5 @@ export default class WaidExtension extends Extension {
                 }
             }
         );
-    }
-
-    _applyStatus(statusJson) {
-        if (!this._indicator) {
-            return;
-        }
-        let parsed = null;
-        try {
-            parsed = JSON.parse(statusJson);
-        } catch (_) {
-            return;
-        }
-        this._indicator.setStatus(parsed.top_level || FALLBACK_TOP_LEVEL, parsed.icon || FALLBACK_ICON);
     }
 }

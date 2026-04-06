@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+from typing import Any
 
 from dbus_next.errors import DBusError
 
@@ -21,13 +22,16 @@ from .config import (
 from .constants import (
     CONFIG_DIR,
     CONFIG_PATH,
+    DISCONNECTED_ICON,
     EXTENSION_DIR,
     EXTENSION_UUID,
     LEGACY_EXTENSION_UUIDS,
     SERVICE_NAME,
+    UNCLASSIFIED_ICON,
 )
 from .daemon import ActivityDaemon
-from .dbus_service import daemon_refresh_taxonomy, daemon_status_json
+from .debug import follow_debug_entries, format_debug_entry, load_debug_entries
+from .dbus_service import daemon_refresh_taxonomy, daemon_status_payload
 from .models import AppPaths
 from .resources import copy_resource_tree
 from .service import install_unit, run_journalctl, run_systemctl, unit_path
@@ -54,6 +58,13 @@ def build_parser() -> argparse.ArgumentParser:
     stats_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
     subparsers.add_parser("doctor")
+
+    debug_parser = subparsers.add_parser("debug")
+    debug_sub = debug_parser.add_subparsers(dest="debug_command", required=True)
+    debug_logs = debug_sub.add_parser("logs")
+    debug_logs.add_argument("--lines", type=int, default=50)
+    debug_logs.add_argument("--follow", action="store_true")
+    debug_logs.add_argument("--json", action="store_true", help="Print raw JSON lines")
 
     config_parser = subparsers.add_parser("config")
     config_sub = config_parser.add_subparsers(dest="config_command", required=True)
@@ -105,25 +116,31 @@ async def _run_refresh(config_path: str, *, local: bool) -> None:
 async def _run_status(json_output: bool) -> None:
     payload: dict[str, object]
     try:
-        payload = json.loads(await daemon_status_json())
+        payload = await daemon_status_payload()
         payload["source"] = "dbus"
-    except (DBusError, RuntimeError, json.JSONDecodeError):
+    except (DBusError, RuntimeError, json.JSONDecodeError, ValueError):
         status = load_status(AppPaths.default().status_json)
         payload = {
-            "current_path": status.current_path if status else "unknown",
-            "top_level": status.top_level if status else "unknown",
-            "icon": status.icon if status else "help-about-symbolic",
-            "updated_at": status.updated_at.isoformat() if status else None,
+            "kind": status.kind if status else "disconnected",
+            "path": status.path if status else None,
+            "top_level_id": status.top_level_id if status else None,
+            "top_level_label": status.top_level_label if status else None,
+            "icon_name": status.icon_name if status else DISCONNECTED_ICON,
+            "published_at": status.published_at.isoformat() if status else None,
+            "taxonomy_hash": status.taxonomy_hash if status else None,
+            "revision": status.revision if status else 0,
             "source": "state-file",
         }
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return
-    print(f"path: {payload['current_path']}")
-    print(f"top level: {payload['top_level']}")
-    print(f"icon: {payload['icon']}")
-    if payload.get("updated_at"):
-        print(f"updated: {payload['updated_at']}")
+    print(f"kind: {payload['kind']}")
+    print(f"path: {payload.get('path') or '-'}")
+    print(f"top level: {payload.get('top_level_label') or '-'}")
+    print(f"icon: {payload['icon_name']}")
+    if payload.get("published_at"):
+        print(f"updated: {payload['published_at']}")
+    print(f"revision: {payload.get('revision', 0)}")
     print(f"source: {payload['source']}")
 
 
@@ -302,6 +319,29 @@ def _run_doctor(config_path: str) -> None:
         print(f"{name}: {status}")
 
 
+def _run_debug_command(args: argparse.Namespace) -> None:
+    if args.debug_command != "logs":
+        raise SystemExit(2)
+    path = AppPaths.default().debug_log
+    if args.follow:
+        for entry in follow_debug_entries(path):
+            _print_debug_entry(entry, json_output=args.json)
+        return
+    entries = load_debug_entries(path, lines=args.lines)
+    if not entries:
+        print(f"no debug logs yet at {path}")
+        return
+    for entry in entries:
+        _print_debug_entry(entry, json_output=args.json)
+
+
+def _print_debug_entry(entry: dict[str, Any], *, json_output: bool) -> None:
+    if json_output:
+        print(json.dumps(entry, sort_keys=True))
+        return
+    print(format_debug_entry(entry))
+
+
 def main() -> None:
     args = build_parser().parse_args()
     if args.command == "init":
@@ -321,6 +361,9 @@ def main() -> None:
         return
     if args.command == "doctor":
         _run_doctor(args.config)
+        return
+    if args.command == "debug":
+        _run_debug_command(args)
         return
     if args.command == "config":
         _run_config_command(args)

@@ -21,5 +21,16 @@ DAEMON_BUS_NAME = "org.waid.Daemon"
 DAEMON_OBJECT_PATH = "/org/waid/Daemon"
 DAEMON_INTERFACE = "org.waid.Daemon"
 
-FALLBACK_CATEGORY = "unknown"
+PANEL_SCHEMA_VERSION = 1
+PANEL_KIND_CLASSIFIED = "classified"
+PANEL_KIND_UNCLASSIFIED = "unclassified"
+PANEL_KIND_DISCONNECTED = "disconnected"
+RESERVED_CATEGORY_NAMES = {
+    "unknown",
+    PANEL_KIND_CLASSIFIED,
+    PANEL_KIND_UNCLASSIFIED,
+    PANEL_KIND_DISCONNECTED,
+}
+UNCLASSIFIED_ICON = "help-about-symbolic"
+DISCONNECTED_ICON = "network-offline-symbolic"
 DEBUG_ENV_VAR = "WAID_DEBUG"

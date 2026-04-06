@@ -13,12 +13,7 @@ class TaxonomyGenerator:
         self.debug = debug
 
     async def generate(self, config: AppConfig, context_outputs: dict[str, str]) -> Taxonomy:
-        rendered_instructions = config.render_generator_instructions(
-            {
-                **context_outputs,
-                "fallback_category": config.fallback_category,
-            }
-        ).strip()
+        rendered_instructions = config.render_generator_instructions(context_outputs).strip()
         prompt = self._build_prompt(config, context_outputs, rendered_instructions)
         last_error: Exception | None = None
         for attempt in range(config.generator.retry_count + 1):
@@ -35,7 +30,8 @@ class TaxonomyGenerator:
                     [{"role": "user", "content": prompt}],
                     json_mode=True,
                 )
-                taxonomy = Taxonomy.model_validate_json(content).ensure_fallback(config.fallback_category)
+                taxonomy = Taxonomy.model_validate_json(content)
+                taxonomy = config.normalize_generated_taxonomy(taxonomy)
                 taxonomy.validate_action_tool_refs(set(config.tools.actions))
                 if self.debug is not None:
                     self.debug.log(
@@ -59,7 +55,6 @@ class TaxonomyGenerator:
         category_lines = [
             f"- {category.name}: {category.note or 'no extra note'}"
             for category in config.generator.categories
-            if category.name != config.fallback_category
         ]
         action_tool_lines = [
             f"- {name}: {' '.join(tool.run)}"
@@ -71,7 +66,6 @@ class TaxonomyGenerator:
         ]
         sections = [
             GENERATOR_BASE_PROMPT.strip(),
-            f"Fallback category: {config.fallback_category}",
             "Broad category hints:\n" + ("\n".join(category_lines) if category_lines else "- none"),
             "Action tool inventory:\n" + ("\n".join(action_tool_lines) if action_tool_lines else "- none"),
             "Context outputs:\n" + ("\n\n".join(context_blocks) if context_blocks else "None."),
