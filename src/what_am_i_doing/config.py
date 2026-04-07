@@ -363,11 +363,17 @@ def build_minimal_config(
     classifier_instructions: str,
     classifier_params: dict[str, str] | None = None,
 ) -> AppConfig:
-    categories = [
-        {"name": name, "note": note}
-        for name, note in category_notes.items()
-        if name not in RESERVED_CATEGORY_NAMES
+    from .categories import resolve_category_paths, validate_category_path
+
+    paths = [
+        name for name in category_notes.keys() if name not in RESERVED_CATEGORY_NAMES
     ]
+    valid_paths = [path for path in paths if validate_category_path(path)]
+    resolved = resolve_category_paths(valid_paths)
+    categories = [
+        {"name": path, "note": category_notes.get(path, "")} for path in resolved
+    ]
+
     return AppConfig.model_validate(
         {
             "version": 1,

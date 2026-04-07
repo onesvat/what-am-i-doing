@@ -9,6 +9,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, Layout, VSplit
 from prompt_toolkit.widgets import Box, CheckboxList, Frame, Label, TextArea
 
+from .categories import CATEGORY_CATALOG, CategoryDefinition
 from .config import CommandConfig
 from .defaults import DEFAULT_CATEGORY_CHOICES
 
@@ -26,83 +27,115 @@ class InitAnswers:
     classifier_params: dict[str, str]
 
 
-class CategoryEditor:
-    def __init__(self, choices: list[tuple[str, str]]) -> None:
-        self._notes = {name: note for name, note in choices}
-        self._values = [(name, name) for name, _note in choices]
-        self._list = CheckboxList(self._values, default_values=[name for name, _note in choices])
-        self._note_area = TextArea(multiline=True, scrollbar=True)
-        self._help = Label(
-            "Space select. Tab edit note for highlighted category. Tab again to save. Enter submit."
+class CategoryTreeEditor:
+    def __init__(self) -> None:
+        self._top_categories = [(cat.name, cat.name) for cat in CATEGORY_CATALOG]
+        self._top_list = CheckboxList(
+            self._top_categories, default_values=[cat.name for cat in CATEGORY_CATALOG]
         )
-        self._result: dict[str, str] | None = None
-        self._current_note_target = choices[0][0]
+        self._sub_lists: dict[str, CheckboxList] = {}
+        for cat in CATEGORY_CATALOG:
+            if cat.subcategories and cat.subcategory_selectable:
+                sub_values = [(sub, f"{cat.name}/{sub}") for sub in cat.subcategories]
+                self._sub_lists[cat.name] = CheckboxList(sub_values, default_values=[])
+        self._current_sub_frame: Frame | None = None
+        self._help = Label(
+            "Space toggle. Up/Down navigate. Enter submit. For browsing, parent includes all subcategories."
+        )
 
-    def run(self) -> dict[str, str]:
-        self._load_current_note()
+    def run(self) -> list[str]:
         kb = KeyBindings()
 
-        @kb.add("tab")
-        def _toggle_note_focus(event) -> None:
-            if event.app.layout.has_focus(self._list):
-                self._load_current_note()
-                event.app.layout.focus(self._note_area)
-                return
-            self._save_current_note()
-            event.app.layout.focus(self._list)
+        @kb.add("space")
+        def _toggle(event) -> None:
+            if event.app.layout.has_focus(self._top_list):
+                self._top_list._handle_key("space")
+                self._update_subcategories_from_parent()
+            elif self._current_sub_list and event.app.layout.has_focus(
+                self._current_sub_list
+            ):
+                self._current_sub_list._handle_key("space")
+                self._update_parent_from_subcategories()
 
-        @kb.add("s-tab")
-        def _back_to_list(event) -> None:
-            self._save_current_note()
-            event.app.layout.focus(self._list)
+        @kb.add("up")
+        def _nav_up(event) -> None:
+            focused = event.app.layout.current_control
+            focused._handle_key("up") if hasattr(focused, "_handle_key") else None
+
+        @kb.add("down")
+        def _nav_down(event) -> None:
+            focused = event.app.layout.current_control
+            focused._handle_key("down") if hasattr(focused, "_handle_key") else None
 
         @kb.add("enter")
         def _submit(event) -> None:
-            self._save_current_note()
-            selected = {name: self._notes.get(name, "") for name in self._list.current_values}
-            event.app.exit(result=selected)
+            selected_paths = self._collect_selected_paths()
+            event.app.exit(result=selected_paths)
 
-        root = Box(
-            body=HSplit(
-                [
-                    Label("Choose broad categories for waid."),
-                    self._help,
-                    VSplit(
-                        [
-                            Frame(self._list, title="Categories"),
-                            Frame(self._note_area, title="Optional note"),
-                        ],
-                        padding=1,
-                    ),
-                ]
-            ),
-            padding=1,
-        )
+        root_content = self._build_layout()
+        root = Box(body=root_content, padding=1)
         app = Application(
-            layout=Layout(root, focused_element=self._list),
+            layout=Layout(root, focused_element=self._top_list),
             key_bindings=kb,
             full_screen=True,
         )
         result = app.run()
-        return result or {}
+        return result or []
 
-    def _selected_name(self) -> str:
-        index = self._list._selected_index
-        return self._values[index][0]
+    def _build_layout(self) -> HSplit:
+        children = [
+            Label("Choose categories for waid."),
+            self._help,
+        ]
 
-    def _load_current_note(self) -> None:
-        self._current_note_target = self._selected_name()
-        self._note_area.text = self._notes.get(self._current_note_target, "")
+        top_frame = Frame(self._top_list, title="Top-level Categories")
+        placeholder = Frame(
+            Label("Select a category with subcategories"), title="Subcategories"
+        )
 
-    def _save_current_note(self) -> None:
-        self._notes[self._current_note_target] = self._note_area.text.strip()
+        children.append(VSplit([top_frame, placeholder], padding=1))
+        return HSplit(children)
+
+    def _current_highlighted_parent(self) -> str:
+        index = self._top_list._selected_index
+        return self._top_categories[index][0]
+
+    def _update_subcategories_from_parent(self) -> None:
+        pass
+
+    def _update_parent_from_subcategories(self) -> None:
+        pass
+
+    def _collect_selected_paths(self) -> list[str]:
+        selected_paths: list[str] = []
+        selected_top = set(self._top_list.current_values)
+
+        for cat in CATEGORY_CATALOG:
+            if cat.name not in selected_top:
+                continue
+
+            if cat.subcategories and not cat.subcategory_selectable:
+                selected_paths.append(cat.name)
+            elif cat.subcategories and cat.subcategory_selectable:
+                sub_list = self._sub_lists.get(cat.name)
+                if sub_list and sub_list.current_values:
+                    for sub in cat.subcategories:
+                        if sub in sub_list.current_values:
+                            selected_paths.append(f"{cat.name}/{sub}")
+                else:
+                    selected_paths.append(cat.name)
+            else:
+                selected_paths.append(cat.name)
+
+        return selected_paths
 
 
 def run_init_wizard() -> InitAnswers:
     base_url = prompt("Model base URL: ", default="http://localhost:11434/v1").strip()
     model_name = prompt("Model name: ", default="gemma3:4b").strip()
     api_key_env = prompt("API key env var: ", default="OPENAI_API_KEY").strip()
-    category_notes = CategoryEditor(list(DEFAULT_CATEGORY_CHOICES)).run()
+    category_paths = CategoryTreeEditor().run()
+    category_notes = {path: "" for path in category_paths}
     context_tools = _collect_tools("context")
     action_tools = _collect_tools("action")
     generator_instructions = prompt(
