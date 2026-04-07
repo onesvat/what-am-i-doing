@@ -1,13 +1,5 @@
 from __future__ import annotations
 
-
-DEFAULT_CATEGORY_CHOICES: list[tuple[str, str]] = [
-    ("coding", ""),
-    ("messaging", "email, chat, meetings"),
-    ("planning", ""),
-    ("surfing", ""),
-]
-
 GENERATOR_BASE_PROMPT = """You generate the runtime activity taxonomy for a GNOME desktop tracker.
 
 Rules:
