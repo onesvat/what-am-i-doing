@@ -75,7 +75,6 @@ class GeneratorCategorySeed(BaseModel):
         for part in parts:
             if not part:
                 raise ValueError("category path parts cannot be empty")
-        for part in parts:
             if part in RESERVED_CATEGORY_NAMES:
                 raise ValueError(f"category name is reserved: {part}")
         return value
@@ -241,7 +240,7 @@ class AppConfig(BaseModel):
     def _normalize_node_with_catalog(self, node: TaxonomyNode) -> TaxonomyNode:
         from .categories import get_description_for_path, get_icon_for_path
 
-        children = node.children or []
+        children = list(node.children or [])
         has_children = len(children) > 0
 
         if has_children:
