@@ -6,12 +6,16 @@ import shlex
 from prompt_toolkit import prompt
 from prompt_toolkit.application import Application
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import HSplit, Layout, VSplit
-from prompt_toolkit.widgets import Box, CheckboxList, Frame, Label, TextArea
+from prompt_toolkit.layout import (
+    HSplit,
+    Layout,
+    VSplit,
+    DynamicContainer,
+)
+from prompt_toolkit.widgets import Box, CheckboxList, Frame, Label
 
 from .categories import CATEGORY_CATALOG, CategoryDefinition
 from .config import CommandConfig
-from .defaults import DEFAULT_CATEGORY_CHOICES
 
 
 @dataclass(slots=True)
@@ -31,41 +35,52 @@ class CategoryTreeEditor:
     def __init__(self) -> None:
         self._top_categories = [(cat.name, cat.name) for cat in CATEGORY_CATALOG]
         self._top_list = CheckboxList(
-            self._top_categories, default_values=[cat.name for cat in CATEGORY_CATALOG]
+            self._top_categories,
+            default_values=[cat.name for cat in CATEGORY_CATALOG],
         )
         self._sub_lists: dict[str, CheckboxList] = {}
         for cat in CATEGORY_CATALOG:
             if cat.subcategories and cat.subcategory_selectable:
-                sub_values = [(sub, f"{cat.name}/{sub}") for sub in cat.subcategories]
+                sub_values = [(sub, sub) for sub in cat.subcategories]
                 self._sub_lists[cat.name] = CheckboxList(sub_values, default_values=[])
-        self._current_sub_frame: Frame | None = None
         self._help = Label(
-            "Space toggle. Up/Down navigate. Enter submit. For browsing, parent includes all subcategories."
+            "Space: toggle. Up/Down: navigate. Tab: switch panels. Enter: submit."
         )
 
     def run(self) -> list[str]:
         kb = KeyBindings()
 
         @kb.add("space")
-        def _toggle(event) -> None:
-            if event.app.layout.has_focus(self._top_list):
-                self._top_list._handle_key("space")
+        def _toggle_with_sync(event) -> None:
+            current = event.app.layout.current_control
+            if current == self._top_list:
+                self._toggle_top_item()
                 self._update_subcategories_from_parent()
-            elif self._current_sub_list and event.app.layout.has_focus(
-                self._current_sub_list
-            ):
-                self._current_sub_list._handle_key("space")
-                self._update_parent_from_subcategories()
+            else:
+                parent = self._find_parent_for_control(current)
+                if parent:
+                    self._toggle_sub_item(parent)
+                    self._update_parent_from_subcategories(parent)
 
-        @kb.add("up")
-        def _nav_up(event) -> None:
-            focused = event.app.layout.current_control
-            focused._handle_key("up") if hasattr(focused, "_handle_key") else None
+        @kb.add("tab")
+        def _switch_panel(event) -> None:
+            current = event.app.layout.current_control
+            if current == self._top_list:
+                sub_list = self._sub_lists.get(self._current_highlighted_parent())
+                if sub_list:
+                    event.app.layout.focus(sub_list)
+            else:
+                event.app.layout.focus(self._top_list)
 
-        @kb.add("down")
-        def _nav_down(event) -> None:
-            focused = event.app.layout.current_control
-            focused._handle_key("down") if hasattr(focused, "_handle_key") else None
+        @kb.add("s-tab")
+        def _switch_panel_back(event) -> None:
+            current = event.app.layout.current_control
+            if current != self._top_list:
+                event.app.layout.focus(self._top_list)
+            else:
+                sub_list = self._sub_lists.get(self._current_highlighted_parent())
+                if sub_list:
+                    event.app.layout.focus(sub_list)
 
         @kb.add("enter")
         def _submit(event) -> None:
@@ -89,22 +104,88 @@ class CategoryTreeEditor:
         ]
 
         top_frame = Frame(self._top_list, title="Top-level Categories")
-        placeholder = Frame(
-            Label("Select a category with subcategories"), title="Subcategories"
-        )
 
-        children.append(VSplit([top_frame, placeholder], padding=1))
+        def get_sub_frame():
+            parent = self._current_highlighted_parent()
+            sub_list = self._sub_lists.get(parent)
+            if sub_list:
+                return Frame(sub_list, title=f"Subcategories: {parent}")
+            return Frame(
+                Label("No subcategories for this category"), title="Subcategories"
+            )
+
+        sub_container = DynamicContainer(get_sub_frame)
+
+        children.append(VSplit([top_frame, sub_container], padding=1))
         return HSplit(children)
 
     def _current_highlighted_parent(self) -> str:
-        index = self._top_list._selected_index
-        return self._top_categories[index][0]
+        index = getattr(self._top_list, "_selected_index", 0)
+        if 0 <= index < len(self._top_categories):
+            return self._top_categories[index][0]
+        return ""
+
+    def _find_parent_for_control(self, control) -> str | None:
+        for parent, sub_list in self._sub_lists.items():
+            if control == sub_list:
+                return parent
+        return None
+
+    def _toggle_top_item(self) -> None:
+        index = getattr(self._top_list, "_selected_index", 0)
+        if 0 <= index < len(self._top_categories):
+            item_name = self._top_categories[index][0]
+            current = set(self._top_list.current_values)
+            if item_name in current:
+                current.remove(item_name)
+            else:
+                current.add(item_name)
+            self._top_list.current_values = list(current)
+
+    def _toggle_sub_item(self, parent: str) -> None:
+        sub_list = self._sub_lists.get(parent)
+        if not sub_list:
+            return
+        index = getattr(sub_list, "_selected_index", 0)
+        values_list = sub_list.values
+        if 0 <= index < len(values_list):
+            sub_name = values_list[index][0]
+            current = set(sub_list.current_values)
+            if sub_name in current:
+                current.remove(sub_name)
+            else:
+                current.add(sub_name)
+            sub_list.current_values = list(current)
 
     def _update_subcategories_from_parent(self) -> None:
-        pass
+        parent = self._current_highlighted_parent()
+        sub_list = self._sub_lists.get(parent)
+        if not sub_list:
+            return
 
-    def _update_parent_from_subcategories(self) -> None:
-        pass
+        parent_selected = parent in self._top_list.current_values
+        all_subs = [sub for sub, _ in sub_list.values]
+
+        if parent_selected:
+            sub_list.current_values = all_subs
+        else:
+            sub_list.current_values = []
+
+    def _update_parent_from_subcategories(self, parent: str) -> None:
+        sub_list = self._sub_lists.get(parent)
+        if not sub_list:
+            return
+
+        all_subs = [sub for sub, _ in sub_list.values]
+        selected_subs = set(sub_list.current_values)
+        current_parents = set(self._top_list.current_values)
+
+        if selected_subs == set(all_subs):
+            current_parents.add(parent)
+        else:
+            current_parents.discard(parent)
+
+        self._top_list.current_values = list(current_parents)
 
     def _collect_selected_paths(self) -> list[str]:
         selected_paths: list[str] = []
