@@ -45,8 +45,14 @@ class TaxonomyNode(BaseModel):
 
     @model_validator(mode="after")
     def validate_name_and_children(self) -> "TaxonomyNode":
-        if not self.name or "/" in self.name:
-            raise ValueError("category names must be non-empty and cannot contain '/'")
+        if not self.name:
+            raise ValueError("category names must be non-empty")
+        if self.name.startswith("/") or self.name.endswith("/"):
+            raise ValueError("category names cannot start or end with '/'")
+        parts = self.name.split("/")
+        for part in parts:
+            if not part:
+                raise ValueError("category path parts cannot be empty")
         names = [child.name for child in self.children]
         if len(names) != len(set(names)):
             raise ValueError(f"duplicate child names under {self.name}")

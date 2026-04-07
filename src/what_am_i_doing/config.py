@@ -67,10 +67,17 @@ class GeneratorCategorySeed(BaseModel):
     @classmethod
     def validate_name(cls, value: str) -> str:
         value = value.strip()
-        if not value or "/" in value:
-            raise ValueError("category names must be non-empty and cannot contain '/'")
-        if value in RESERVED_CATEGORY_NAMES:
-            raise ValueError(f"category name is reserved: {value}")
+        if not value:
+            raise ValueError("category names must be non-empty")
+        if value.startswith("/") or value.endswith("/"):
+            raise ValueError("category names cannot start or end with '/'")
+        parts = value.split("/")
+        for part in parts:
+            if not part:
+                raise ValueError("category path parts cannot be empty")
+        for part in parts:
+            if part in RESERVED_CATEGORY_NAMES:
+                raise ValueError(f"category name is reserved: {part}")
         return value
 
 
@@ -169,13 +176,21 @@ class AppConfig(BaseModel):
         return STATE_DIR
 
     def seed_taxonomy(self) -> Taxonomy:
+        from .categories import (
+            get_description_for_path,
+            get_icon_for_path,
+            resolve_category_paths,
+        )
+
+        paths = [cat.name for cat in self.generator.categories]
+        resolved = resolve_category_paths(paths)
         categories: list[TaxonomyNode] = []
-        for category in self.generator.categories:
+        for path in resolved:
             categories.append(
                 TaxonomyNode(
-                    name=category.name,
-                    description=category.note or f"Broad {category.name} activity.",
-                    icon=_default_icon_for(category.name),
+                    name=path,
+                    description=get_description_for_path(path),
+                    icon=get_icon_for_path(path),
                     tool_calls=[],
                     children=[],
                 )
@@ -183,22 +198,30 @@ class AppConfig(BaseModel):
         return Taxonomy(categories=categories)
 
     def normalize_generated_taxonomy(self, taxonomy: Taxonomy) -> Taxonomy:
+        from .categories import (
+            get_description_for_path,
+            get_icon_for_path,
+            resolve_category_paths,
+        )
+
         existing = {node.name: node for node in taxonomy.categories}
+        paths = [cat.name for cat in self.generator.categories]
+        resolved = resolve_category_paths(paths)
         categories: list[TaxonomyNode] = []
-        for category in self.generator.categories:
-            node = existing.get(category.name)
+        for path in resolved:
+            node = existing.get(path)
             if node is None:
                 categories.append(
                     TaxonomyNode(
-                        name=category.name,
-                        description=category.note or f"Broad {category.name} activity.",
-                        icon=_default_icon_for(category.name),
+                        name=path,
+                        description=get_description_for_path(path),
+                        icon=get_icon_for_path(path),
                         tool_calls=[],
                         children=[],
                     )
                 )
                 continue
-            normalized_node = self._normalize_node(node, category.note)
+            normalized_node = self._normalize_node_with_catalog(node)
             categories.append(normalized_node)
         idle_node = existing.get("idle")
         if idle_node is None:
@@ -215,9 +238,9 @@ class AppConfig(BaseModel):
             categories.append(idle_node)
         return Taxonomy(categories=categories)
 
-    def _normalize_node(
-        self, node: TaxonomyNode, fallback_note: str = ""
-    ) -> TaxonomyNode:
+    def _normalize_node_with_catalog(self, node: TaxonomyNode) -> TaxonomyNode:
+        from .categories import get_description_for_path, get_icon_for_path
+
         children = node.children or []
         has_children = len(children) > 0
 
@@ -229,7 +252,7 @@ class AppConfig(BaseModel):
                     TaxonomyNode(
                         name="other",
                         description=f"General {node.name} activities not matching specific subcategories.",
-                        icon=_default_icon_for(f"{node.name}/other"),
+                        icon=get_icon_for_path(node.name),
                         tool_calls=list(node.tool_calls),
                         children=[],
                     )
@@ -241,22 +264,38 @@ class AppConfig(BaseModel):
                             name="other",
                             description=child.description
                             or f"General {node.name} activities not matching specific subcategories.",
-                            icon=child.icon or _default_icon_for(f"{node.name}/other"),
+                            icon=child.icon or get_icon_for_path(node.name),
                             tool_calls=list(node.tool_calls),
                             children=child.children or [],
                         )
                         break
+            normalized_children = [
+                self._normalize_child_node(child, node.name) for child in children
+            ]
         else:
             tool_calls = node.tool_calls or []
+            normalized_children = []
 
         return TaxonomyNode(
             name=node.name,
-            description=node.description
-            or fallback_note
-            or f"Broad {node.name} activity.",
-            icon=_default_icon_for(node.name),
+            description=node.description or get_description_for_path(node.name),
+            icon=get_icon_for_path(node.name),
             tool_calls=tool_calls,
-            children=children,
+            children=normalized_children,
+        )
+
+    def _normalize_child_node(
+        self, child: TaxonomyNode, parent_name: str
+    ) -> TaxonomyNode:
+        from .categories import get_description_for_path, get_icon_for_path
+
+        child_path = f"{parent_name}/{child.name}"
+        return TaxonomyNode(
+            name=child.name,
+            description=child.description or get_description_for_path(child_path),
+            icon=child.icon or get_icon_for_path(child_path),
+            tool_calls=child.tool_calls or [],
+            children=child.children or [],
         )
 
     def render_generator_instructions(self, variables: dict[str, str]) -> str:
@@ -361,17 +400,6 @@ def build_minimal_config(
 
 
 def _default_icon_for(name: str) -> str:
-    icons = {
-        "coding": "laptop-symbolic",
-        "coding/other": "laptop-symbolic",
-        "messaging": "mail-unread-symbolic",
-        "messaging/other": "mail-unread-symbolic",
-        "planning": "view-calendar-symbolic",
-        "planning/other": "view-calendar-symbolic",
-        "surfing": "web-browser-symbolic",
-        "surfing/other": "web-browser-symbolic",
-        "adult": "dialog-warning-symbolic",
-        "idle": "system-suspend-symbolic",
-        "other": "applications-system-symbolic",
-    }
-    return icons.get(name, "applications-system-symbolic")
+    from .categories import get_icon_for_path
+
+    return get_icon_for_path(name)

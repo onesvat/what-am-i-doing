@@ -85,7 +85,7 @@ class ConfigTest(unittest.TestCase):
                 "generator": {
                     "categories": [
                         {"name": "coding"},
-                        {"name": "surfing"},
+                        {"name": "research"},
                     ],
                     "instructions": "gen",
                 },
@@ -103,15 +103,16 @@ class ConfigTest(unittest.TestCase):
                     ],
                 ),
                 TaxonomyNode(
-                    name="research",
-                    description="Research work",
+                    name="writing",
+                    description="Writing work",
                     icon="📚",
                 ),
             ]
         )
         normalized = config.normalize_generated_taxonomy(taxonomy)
         self.assertEqual(
-            ["coding", "surfing", "idle"], [node.name for node in normalized.categories]
+            ["coding", "research", "idle"],
+            [node.name for node in normalized.categories],
         )
         self.assertEqual("laptop-symbolic", normalized.categories[0].icon)
         self.assertEqual("project-x", normalized.categories[0].children[0].name)
@@ -415,6 +416,106 @@ class ConfigTest(unittest.TestCase):
         )
         normalized = config.normalize_generated_taxonomy(taxonomy)
         self.assertIn("idle", normalized.allowed_paths())
+
+    def test_category_path_with_subcategory_accepted(self) -> None:
+        config = AppConfig.model_validate(
+            {
+                "version": 1,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "generator": {
+                    "categories": [{"name": "communication/email"}],
+                    "instructions": "",
+                },
+                "classifier": {"instructions": ""},
+            }
+        )
+        self.assertEqual(
+            ["communication/email"],
+            [node.name for node in config.seed_taxonomy().categories],
+        )
+
+    def test_reserved_category_in_path_rejected(self) -> None:
+        with self.assertRaises(Exception):
+            AppConfig.model_validate(
+                {
+                    "version": 1,
+                    "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                    "generator": {
+                        "categories": [{"name": "coding/unknown"}],
+                        "instructions": "",
+                    },
+                    "classifier": {"instructions": ""},
+                }
+            )
+
+    def test_browsing_expands_to_subcategories_in_seed_taxonomy(self) -> None:
+        config = AppConfig.model_validate(
+            {
+                "version": 1,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "generator": {
+                    "categories": [{"name": "browsing"}],
+                    "instructions": "",
+                },
+                "classifier": {"instructions": ""},
+            }
+        )
+        names = [node.name for node in config.seed_taxonomy().categories]
+        self.assertEqual(
+            [
+                "browsing/social_media",
+                "browsing/shopping",
+                "browsing/news",
+                "browsing/entertainment",
+                "browsing/reference",
+            ],
+            names,
+        )
+
+    def test_selectable_category_stays_top_level(self) -> None:
+        config = AppConfig.model_validate(
+            {
+                "version": 1,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "generator": {
+                    "categories": [{"name": "communication"}],
+                    "instructions": "",
+                },
+                "classifier": {"instructions": ""},
+            }
+        )
+        names = [node.name for node in config.seed_taxonomy().categories]
+        self.assertEqual(["communication"], names)
+
+    def test_catalog_icon_used_for_category(self) -> None:
+        config = AppConfig.model_validate(
+            {
+                "version": 1,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "generator": {
+                    "categories": [{"name": "coding"}],
+                    "instructions": "",
+                },
+                "classifier": {"instructions": ""},
+            }
+        )
+        taxonomy = config.seed_taxonomy()
+        self.assertEqual("laptop-symbolic", taxonomy.categories[0].icon)
+
+    def test_catalog_description_used_for_category(self) -> None:
+        config = AppConfig.model_validate(
+            {
+                "version": 1,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "generator": {
+                    "categories": [{"name": "coding"}],
+                    "instructions": "",
+                },
+                "classifier": {"instructions": ""},
+            }
+        )
+        taxonomy = config.seed_taxonomy()
+        self.assertIn("Development", taxonomy.categories[0].description)
 
 
 if __name__ == "__main__":
