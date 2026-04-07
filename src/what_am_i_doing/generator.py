@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from .categories import CATEGORY_CATALOG
 from .config import AppConfig
 from .debug import DebugLogger
 from .defaults import GENERATOR_BASE_PROMPT
@@ -58,10 +59,24 @@ class TaxonomyGenerator:
         context_outputs: dict[str, str],
         rendered_instructions: str,
     ) -> str:
-        category_lines = [
-            f"- {category.name}: {category.note or 'no extra note'}"
-            for category in config.generator.categories
-        ]
+        category_lines: list[str] = []
+        for category in config.generator.categories:
+            cat_def = next(
+                (c for c in CATEGORY_CATALOG if c.name == category.name), None
+            )
+            if cat_def:
+                line = f"- {cat_def.name} (icon: {cat_def.icon}): {cat_def.description}"
+                if cat_def.subcategories:
+                    line += f" Subcategories: {', '.join(cat_def.subcategories)}."
+                if category.note:
+                    line += f" User note: {category.note}"
+                category_lines.append(line)
+            else:
+                note_text = category.note or "no description"
+                category_lines.append(
+                    f"- {category.name}: {note_text} (no catalog entry)"
+                )
+
         action_tool_lines = [
             f"- {name}: {' '.join(tool.run)}"
             for name, tool in sorted(config.tools.actions.items())
@@ -90,7 +105,7 @@ class TaxonomyGenerator:
 
         sections = [
             GENERATOR_BASE_PROMPT.strip(),
-            "Broad category hints:\n"
+            "Category definitions:\n"
             + ("\n".join(category_lines) if category_lines else "- none"),
             "Action tool inventory:\n"
             + ("\n".join(action_tool_lines) if action_tool_lines else "- none"),
