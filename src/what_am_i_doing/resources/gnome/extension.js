@@ -374,8 +374,6 @@ export default class WaidExtension extends Extension {
                     const childSelected = currentPath === childPath;
                     const childIcon = this._taxonomyIcons.get(childPath) || null;
                     
-                    total += childSeconds;
-                    
                     this._addRadioStatRow(child.name, childPath, childSeconds, childIcon, true, childSelected, false);
                 }
             }
