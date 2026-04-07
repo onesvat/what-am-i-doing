@@ -111,7 +111,7 @@ class ConfigTest(unittest.TestCase):
         )
         normalized = config.normalize_generated_taxonomy(taxonomy)
         self.assertEqual(
-            ["coding", "surfing"], [node.name for node in normalized.categories]
+            ["coding", "surfing", "idle"], [node.name for node in normalized.categories]
         )
         self.assertEqual("laptop-symbolic", normalized.categories[0].icon)
         self.assertEqual("project-x", normalized.categories[0].children[0].name)
@@ -309,6 +309,112 @@ class ConfigTest(unittest.TestCase):
     def test_parse_target_from_hint_raises_on_invalid_format(self) -> None:
         with self.assertRaises(ValueError):
             parse_target_from_hint("opencode window is cool")
+
+    def test_config_accepts_idle_threshold_seconds(self) -> None:
+        config = AppConfig.model_validate(
+            {
+                "version": 1,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "generator": {"categories": [{"name": "coding"}], "instructions": ""},
+                "classifier": {"instructions": ""},
+                "idle_threshold_seconds": 90,
+            }
+        )
+        self.assertEqual(90, config.idle_threshold_seconds)
+
+    def test_config_defaults_idle_threshold_to_60(self) -> None:
+        config = AppConfig.model_validate(
+            {
+                "version": 1,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "generator": {"categories": [{"name": "coding"}], "instructions": ""},
+                "classifier": {"instructions": ""},
+            }
+        )
+        self.assertEqual(60, config.idle_threshold_seconds)
+
+    def test_config_accepts_classify_idle_bool(self) -> None:
+        config = AppConfig.model_validate(
+            {
+                "version": 1,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "generator": {"categories": [{"name": "coding"}], "instructions": ""},
+                "classifier": {"instructions": ""},
+                "classify_idle": False,
+            }
+        )
+        self.assertEqual(False, config.classify_idle)
+
+    def test_config_defaults_classify_idle_to_true(self) -> None:
+        config = AppConfig.model_validate(
+            {
+                "version": 1,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "generator": {"categories": [{"name": "coding"}], "instructions": ""},
+                "classifier": {"instructions": ""},
+            }
+        )
+        self.assertEqual(True, config.classify_idle)
+
+    def test_normalize_injects_idle_category(self) -> None:
+        config = AppConfig.model_validate(
+            {
+                "version": 1,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "generator": {"categories": [{"name": "coding"}], "instructions": ""},
+                "classifier": {"instructions": ""},
+            }
+        )
+        taxonomy = Taxonomy(
+            categories=[TaxonomyNode(name="coding", description="Coding")]
+        )
+        normalized = config.normalize_generated_taxonomy(taxonomy)
+        names = [node.name for node in normalized.categories]
+        self.assertIn("idle", names)
+        idle_node = next(node for node in normalized.categories if node.name == "idle")
+        self.assertEqual(
+            "User is idle (no keyboard/mouse activity)", idle_node.description
+        )
+        self.assertEqual("system-suspend-symbolic", idle_node.icon)
+
+    def test_normalize_keeps_existing_idle_if_present(self) -> None:
+        config = AppConfig.model_validate(
+            {
+                "version": 1,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "generator": {"categories": [{"name": "coding"}], "instructions": ""},
+                "classifier": {"instructions": ""},
+            }
+        )
+        taxonomy = Taxonomy(
+            categories=[
+                TaxonomyNode(
+                    name="idle",
+                    description="Custom idle description",
+                    icon="custom-icon",
+                ),
+                TaxonomyNode(name="coding", description="Coding"),
+            ]
+        )
+        normalized = config.normalize_generated_taxonomy(taxonomy)
+        idle_node = next(node for node in normalized.categories if node.name == "idle")
+        self.assertEqual("Custom idle description", idle_node.description)
+        self.assertEqual("custom-icon", idle_node.icon)
+
+    def test_idle_in_allowed_paths(self) -> None:
+        config = AppConfig.model_validate(
+            {
+                "version": 1,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "generator": {"categories": [{"name": "coding"}], "instructions": ""},
+                "classifier": {"instructions": ""},
+            }
+        )
+        taxonomy = Taxonomy(
+            categories=[TaxonomyNode(name="coding", description="Coding")]
+        )
+        normalized = config.normalize_generated_taxonomy(taxonomy)
+        self.assertIn("idle", normalized.allowed_paths())
 
 
 if __name__ == "__main__":

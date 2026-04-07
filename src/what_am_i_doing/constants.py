@@ -11,7 +11,9 @@ SYSTEMD_USER_DIR = Path.home() / ".config" / "systemd" / "user"
 SERVICE_NAME = f"{APP_NAME}.service"
 EXTENSION_UUID = f"{APP_NAME}@onesvat.github.io"
 LEGACY_EXTENSION_UUIDS = ("waid@gnome",)
-EXTENSION_DIR = Path.home() / ".local" / "share" / "gnome-shell" / "extensions" / EXTENSION_UUID
+EXTENSION_DIR = (
+    Path.home() / ".local" / "share" / "gnome-shell" / "extensions" / EXTENSION_UUID
+)
 
 TRACKER_BUS_NAME = "org.waid.WindowTracker"
 TRACKER_OBJECT_PATH = "/org/waid/WindowTracker"
@@ -27,10 +29,12 @@ PANEL_KIND_UNCLASSIFIED = "unclassified"
 PANEL_KIND_DISCONNECTED = "disconnected"
 RESERVED_CATEGORY_NAMES = {
     "unknown",
+    "idle",
     PANEL_KIND_CLASSIFIED,
     PANEL_KIND_UNCLASSIFIED,
     PANEL_KIND_DISCONNECTED,
 }
+IDLE_ICON = "system-suspend-symbolic"
 UNCLASSIFIED_ICON = "help-about-symbolic"
 DISCONNECTED_ICON = "network-offline-symbolic"
 DEBUG_ENV_VAR = "WAID_DEBUG"

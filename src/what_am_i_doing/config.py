@@ -8,7 +8,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 import yaml
 
-from .constants import CONFIG_PATH, RESERVED_CATEGORY_NAMES, STATE_DIR
+from .constants import CONFIG_PATH, IDLE_ICON, RESERVED_CATEGORY_NAMES, STATE_DIR
 from .models import Taxonomy, TaxonomyNode
 
 
@@ -144,6 +144,8 @@ class AppConfig(BaseModel):
     classifier: ClassifierConfig
     tools: ToolRegistry = Field(default_factory=ToolRegistry)
     learned: list[LearnedRule] = Field(default_factory=list)
+    idle_threshold_seconds: int = 60
+    classify_idle: bool = True
 
     @model_validator(mode="after")
     def validate_version_and_categories(self) -> "AppConfig":
@@ -198,6 +200,19 @@ class AppConfig(BaseModel):
                 continue
             normalized_node = self._normalize_node(node, category.note)
             categories.append(normalized_node)
+        idle_node = existing.get("idle")
+        if idle_node is None:
+            categories.append(
+                TaxonomyNode(
+                    name="idle",
+                    description="User is idle (no keyboard/mouse activity)",
+                    icon=IDLE_ICON,
+                    tool_calls=[],
+                    children=[],
+                )
+            )
+        else:
+            categories.append(idle_node)
         return Taxonomy(categories=categories)
 
     def _normalize_node(
@@ -356,6 +371,7 @@ def _default_icon_for(name: str) -> str:
         "surfing": "web-browser-symbolic",
         "surfing/other": "web-browser-symbolic",
         "adult": "dialog-warning-symbolic",
+        "idle": "system-suspend-symbolic",
         "other": "applications-system-symbolic",
     }
     return icons.get(name, "applications-system-symbolic")

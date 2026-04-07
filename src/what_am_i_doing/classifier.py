@@ -22,6 +22,10 @@ class EventClassifier:
         taxonomy: Taxonomy,
         previous_path: str | None,
     ) -> str:
+        if config.classify_idle and state.idle_time_seconds is not None:
+            if state.idle_time_seconds >= config.idle_threshold_seconds:
+                if "idle" in taxonomy.allowed_paths():
+                    return "idle"
         allowed_paths = sorted(taxonomy.allowed_paths())
         valid_outputs = allowed_paths + [PANEL_KIND_UNCLASSIFIED]
         base_prompt = self._build_prompt(

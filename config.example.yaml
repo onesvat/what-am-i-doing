@@ -49,3 +49,6 @@ tools:
       timeout_seconds: 10
 
 learned: []
+
+idle_threshold_seconds: 60
+classify_idle: true

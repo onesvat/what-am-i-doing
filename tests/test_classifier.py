@@ -27,7 +27,9 @@ class FakeClient:
 
 class ClassifierTest(unittest.TestCase):
     def test_retry_then_fallback(self) -> None:
-        taxonomy = Taxonomy(categories=[TaxonomyNode(name="coding", description="Coding work")])
+        taxonomy = Taxonomy(
+            categories=[TaxonomyNode(name="coding", description="Coding work")]
+        )
         config = AppConfig.model_validate(
             {
                 "version": 1,
@@ -47,6 +49,132 @@ class ClassifierTest(unittest.TestCase):
         self.assertEqual("unclassified", result)
         self.assertEqual(2, len(client.calls))
         self.assertIn("Mode: focused", client.calls[0])
+
+    def test_idle_detection_above_threshold(self) -> None:
+        taxonomy = Taxonomy(
+            categories=[TaxonomyNode(name="idle", description="User idle")]
+        )
+        config = AppConfig.model_validate(
+            {
+                "version": 1,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "generator": {"instructions": "gen"},
+                "classifier": {"instructions": "cls"},
+                "idle_threshold_seconds": 60,
+                "classify_idle": True,
+            }
+        )
+        state = ProviderState(timestamp=utcnow(), idle_time_seconds=120)
+        client = FakeClient([])
+        classifier = EventClassifier(client)
+        result = asyncio.run(classifier.classify(config, state, taxonomy, None))
+        self.assertEqual("idle", result)
+        self.assertEqual(0, len(client.calls))
+
+    def test_idle_detection_exactly_at_threshold(self) -> None:
+        taxonomy = Taxonomy(
+            categories=[TaxonomyNode(name="idle", description="User idle")]
+        )
+        config = AppConfig.model_validate(
+            {
+                "version": 1,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "generator": {"instructions": "gen"},
+                "classifier": {"instructions": "cls"},
+                "idle_threshold_seconds": 60,
+                "classify_idle": True,
+            }
+        )
+        state = ProviderState(timestamp=utcnow(), idle_time_seconds=60)
+        client = FakeClient([])
+        classifier = EventClassifier(client)
+        result = asyncio.run(classifier.classify(config, state, taxonomy, None))
+        self.assertEqual("idle", result)
+
+    def test_idle_detection_below_threshold(self) -> None:
+        taxonomy = Taxonomy(
+            categories=[TaxonomyNode(name="coding", description="Coding")]
+        )
+        config = AppConfig.model_validate(
+            {
+                "version": 1,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "generator": {"instructions": "gen"},
+                "classifier": {"instructions": "cls"},
+                "idle_threshold_seconds": 60,
+                "classify_idle": True,
+            }
+        )
+        state = ProviderState(timestamp=utcnow(), idle_time_seconds=30)
+        client = FakeClient(["coding"])
+        classifier = EventClassifier(client)
+        result = asyncio.run(classifier.classify(config, state, taxonomy, None))
+        self.assertEqual("coding", result)
+        self.assertEqual(1, len(client.calls))
+
+    def test_idle_detection_disabled(self) -> None:
+        taxonomy = Taxonomy(
+            categories=[
+                TaxonomyNode(name="idle", description="User idle"),
+                TaxonomyNode(name="coding", description="Coding"),
+            ]
+        )
+        config = AppConfig.model_validate(
+            {
+                "version": 1,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "generator": {"instructions": "gen"},
+                "classifier": {"instructions": "cls"},
+                "idle_threshold_seconds": 60,
+                "classify_idle": False,
+            }
+        )
+        state = ProviderState(timestamp=utcnow(), idle_time_seconds=120)
+        client = FakeClient(["coding"])
+        classifier = EventClassifier(client)
+        result = asyncio.run(classifier.classify(config, state, taxonomy, None))
+        self.assertEqual("coding", result)
+        self.assertEqual(1, len(client.calls))
+
+    def test_idle_detection_no_idle_time(self) -> None:
+        taxonomy = Taxonomy(
+            categories=[TaxonomyNode(name="coding", description="Coding")]
+        )
+        config = AppConfig.model_validate(
+            {
+                "version": 1,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "generator": {"instructions": "gen"},
+                "classifier": {"instructions": "cls"},
+                "idle_threshold_seconds": 60,
+                "classify_idle": True,
+            }
+        )
+        state = ProviderState(timestamp=utcnow())
+        client = FakeClient(["coding"])
+        classifier = EventClassifier(client)
+        result = asyncio.run(classifier.classify(config, state, taxonomy, None))
+        self.assertEqual("coding", result)
+
+    def test_idle_not_in_taxonomy(self) -> None:
+        taxonomy = Taxonomy(
+            categories=[TaxonomyNode(name="coding", description="Coding")]
+        )
+        config = AppConfig.model_validate(
+            {
+                "version": 1,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "generator": {"instructions": "gen"},
+                "classifier": {"instructions": "cls"},
+                "idle_threshold_seconds": 60,
+                "classify_idle": True,
+            }
+        )
+        state = ProviderState(timestamp=utcnow(), idle_time_seconds=120)
+        client = FakeClient(["coding"])
+        classifier = EventClassifier(client)
+        result = asyncio.run(classifier.classify(config, state, taxonomy, None))
+        self.assertEqual("coding", result)
 
 
 if __name__ == "__main__":
