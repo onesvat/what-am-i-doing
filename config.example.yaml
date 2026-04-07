@@ -12,10 +12,10 @@ generator:
   retry_count: 1
   categories:
     - name: coding
-    - name: messaging
-      note: email, chat, meetings
-    - name: planning
-    - name: surfing
+    - name: research
+    - name: communication
+    - name: browsing
+    - name: adult
   instructions: |
     Prefer matching today's planned tasks when possible.
     Today's tasks:
