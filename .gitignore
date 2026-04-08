@@ -12,3 +12,6 @@ dist/
 # Local app state
 .local/
 *.log
+
+# Helper scripts not part of waid
+sp-task-monitor.py
