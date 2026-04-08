@@ -210,10 +210,16 @@ class AppConfig(BaseModel):
         for path in resolved:
             node = existing.get(path)
             if node is None:
+                description = get_description_for_path(path)
+                cat_seed = next(
+                    (c for c in self.generator.categories if c.name == path), None
+                )
+                if cat_seed and cat_seed.note and description.startswith("Broad"):
+                    description = cat_seed.note
                 categories.append(
                     TaxonomyNode(
                         name=path,
-                        description=get_description_for_path(path),
+                        description=description,
                         icon=get_icon_for_path(path),
                         tool_calls=[],
                         children=[],
@@ -288,9 +294,12 @@ class AppConfig(BaseModel):
     ) -> TaxonomyNode:
         from .categories import get_description_for_path, get_icon_for_path
 
-        child_path = f"{parent_name}/{child.name}"
+        child_name = child.name
+        if child_name.startswith(f"{parent_name}/"):
+            child_name = child_name[len(parent_name) + 1 :]
+        child_path = f"{parent_name}/{child_name}"
         return TaxonomyNode(
-            name=child.name,
+            name=child_name,
             description=child.description or get_description_for_path(child_path),
             icon=child.icon or get_icon_for_path(child_path),
             tool_calls=child.tool_calls or [],

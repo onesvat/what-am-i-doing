@@ -517,6 +517,69 @@ class ConfigTest(unittest.TestCase):
         taxonomy = config.seed_taxonomy()
         self.assertIn("Development", taxonomy.categories[0].description)
 
+    def test_normalize_child_with_full_path_strips_prefix(self) -> None:
+        config = AppConfig.model_validate(
+            {
+                "version": 1,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "generator": {"categories": [{"name": "coding"}], "instructions": ""},
+                "classifier": {"instructions": ""},
+            }
+        )
+        taxonomy = Taxonomy(
+            categories=[
+                TaxonomyNode(
+                    name="coding",
+                    description="Coding work",
+                    children=[
+                        TaxonomyNode(
+                            name="coding/debugging",
+                            description="Debugging work",
+                        )
+                    ],
+                )
+            ]
+        )
+        normalized = config.normalize_generated_taxonomy(taxonomy)
+        allowed = normalized.allowed_paths()
+        self.assertIn("coding/debugging", allowed)
+        self.assertNotIn("coding/coding/debugging", allowed)
+        coding_node = next(n for n in normalized.categories if n.name == "coding")
+        self.assertEqual(["debugging", "other"], [c.name for c in coding_node.children])
+
+    def test_normalize_generated_taxonomy_enforces_all_config_categories(self) -> None:
+        """ALL categories from config must appear in normalized taxonomy."""
+        config = AppConfig.model_validate(
+            {
+                "version": 1,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "test"},
+                "generator": {
+                    "categories": [
+                        {"name": "coding"},
+                        {"name": "custom_cat", "note": "My custom category"},
+                        {"name": "research"},
+                    ],
+                    "instructions": "",
+                },
+                "classifier": {"instructions": ""},
+            }
+        )
+
+        sparse_taxonomy = Taxonomy.model_validate(
+            {"categories": [{"name": "coding", "description": "...", "icon": "..."}]}
+        )
+
+        normalized = config.normalize_generated_taxonomy(sparse_taxonomy)
+
+        paths = normalized.allowed_paths()
+        self.assertIn("coding", paths)
+        self.assertIn("custom_cat", paths)
+        self.assertIn("research", paths)
+        self.assertIn("idle", paths)
+
+        custom_node = next(n for n in normalized.categories if n.name == "custom_cat")
+        self.assertEqual("My custom category", custom_node.description)
+
 
 if __name__ == "__main__":
     unittest.main()
