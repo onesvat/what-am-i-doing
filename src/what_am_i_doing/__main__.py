@@ -41,6 +41,7 @@ from .models import AppPaths
 from .resources import copy_resource_tree
 from .service import install_unit, run_journalctl, run_systemctl, unit_path
 from .storage import load_spans, load_status
+from .timeline import TimelineApp
 from .wizard import run_init_wizard
 
 
@@ -85,6 +86,19 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["today", "week", "month", "all"],
         default="today",
         help="Time period to show (default: today)",
+    )
+
+    timeline_parser = subparsers.add_parser("timeline")
+    timeline_parser.add_argument(
+        "--view",
+        choices=["overview", "daily", "weekly", "stats"],
+        default="daily",
+        help="Starting view (default: daily)",
+    )
+    timeline_parser.add_argument(
+        "--theme",
+        default="green",
+        help="Color theme (green, halloween, teal, blue, pink, purple, orange, monochrome, ylgnbu)",
     )
 
     subparsers.add_parser("doctor")
@@ -268,6 +282,14 @@ def _run_stats(json_output: bool, period: str) -> None:
 
     print(f"  {'─' * (col_width + 4)}")
     print(f"  {'Total':<{col_width - 2}}{_format_duration(total):>6}")
+
+
+def _run_timeline(view: str, theme: str) -> None:
+    spans = load_spans(AppPaths.default().spans_log)
+    app = TimelineApp(spans=spans, start_view=view)
+    if theme:
+        app.theme_name = theme
+    app.run()
 
 
 def _run_init(config_path: str, *, force: bool) -> None:
@@ -538,6 +560,9 @@ def main() -> None:
         return
     if args.command == "stats":
         _run_stats(args.json, args.period)
+        return
+    if args.command == "timeline":
+        _run_timeline(args.view, args.theme)
         return
     if args.command == "doctor":
         _run_doctor(args.config)
