@@ -147,21 +147,29 @@ def _subcategory_description(parent: str, child: str) -> str | None:
 
 
 def resolve_category_paths(paths: list[str]) -> list[str]:
-    """Expand top-level paths to include all default subcategories if applicable."""
+    """Expand top-level paths to include all default subcategories if applicable.
+
+    Custom categories not in catalog are still included (not skipped).
+    """
     result: list[str] = []
     for path in paths:
         top, _, child = path.partition("/")
         cat = get_category_definition(top)
+
         if cat is None:
+            result.append(path)
             continue
+
         if child:
             result.append(path)
             continue
+
         if cat.subcategories and not cat.subcategory_selectable:
             for sub in cat.subcategories:
                 result.append(f"{top}/{sub}")
         else:
             result.append(top)
+
     return result
 
 

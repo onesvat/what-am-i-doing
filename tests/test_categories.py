@@ -109,6 +109,14 @@ class CategoriesTest(unittest.TestCase):
         self.assertEqual(10, len(choices))
         self.assertEqual("coding", choices[0][0])
 
+    def test_resolve_category_paths_handles_custom_categories(self) -> None:
+        """Custom categories not in catalog should still be returned."""
+        paths = ["coding", "custom_category", "research/custom_sub"]
+        result = resolve_category_paths(paths)
+        self.assertIn("coding", result)
+        self.assertIn("custom_category", result)
+        self.assertIn("research/custom_sub", result)
+
 
 if __name__ == "__main__":
     unittest.main()
