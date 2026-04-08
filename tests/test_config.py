@@ -193,9 +193,9 @@ class ConfigTest(unittest.TestCase):
             ]
         )
         normalized = config.normalize_generated_taxonomy(taxonomy)
-        self.assertEqual(
-            ["sp_stop"], [c.tool for c in normalized.categories[0].tool_calls]
-        )
+        coding_node = normalized.categories[0]
+        other_child = next(c for c in coding_node.children if c.name == "other")
+        self.assertEqual(["sp_stop"], [c.tool for c in other_child.tool_calls])
 
     def test_normalize_inherits_parent_tools_to_existing_other(self) -> None:
         config = AppConfig.model_validate(
@@ -572,13 +572,42 @@ class ConfigTest(unittest.TestCase):
         normalized = config.normalize_generated_taxonomy(sparse_taxonomy)
 
         paths = normalized.allowed_paths()
-        self.assertIn("coding", paths)
-        self.assertIn("custom_cat", paths)
-        self.assertIn("research", paths)
+        self.assertIn("coding/other", paths)
+        self.assertIn("custom_cat/other", paths)
+        self.assertIn("research/other", paths)
         self.assertIn("idle", paths)
 
         custom_node = next(n for n in normalized.categories if n.name == "custom_cat")
         self.assertEqual("My custom category", custom_node.description)
+
+    def test_normalized_taxonomy_has_other_fallback_for_top_level(self) -> None:
+        """Top-level categories should have '{category}/other' fallback subcategory."""
+        config = AppConfig.model_validate(
+            {
+                "version": 1,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "test"},
+                "generator": {"categories": [{"name": "coding"}], "instructions": ""},
+                "classifier": {"instructions": ""},
+            }
+        )
+
+        simple_taxonomy = Taxonomy.model_validate(
+            {
+                "categories": [
+                    {
+                        "name": "coding",
+                        "description": "...",
+                        "icon": "...",
+                        "children": [],
+                    }
+                ]
+            }
+        )
+
+        normalized = config.normalize_generated_taxonomy(simple_taxonomy)
+
+        paths = normalized.allowed_paths()
+        self.assertIn("coding/other", paths)
 
 
 if __name__ == "__main__":

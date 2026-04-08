@@ -222,7 +222,15 @@ class AppConfig(BaseModel):
                         description=description,
                         icon=get_icon_for_path(path),
                         tool_calls=[],
-                        children=[],
+                        children=[
+                            TaxonomyNode(
+                                name="other",
+                                description=f"General {path} activities not matching specific subcategories.",
+                                icon=get_icon_for_path(path),
+                                tool_calls=[],
+                                children=[],
+                            )
+                        ],
                     )
                 )
                 continue
@@ -247,39 +255,38 @@ class AppConfig(BaseModel):
         from .categories import get_description_for_path, get_icon_for_path
 
         children = list(node.children or [])
-        has_children = len(children) > 0
+        has_other = any(child.name == "other" for child in children)
+        parent_tool_calls = list(node.tool_calls or [])
 
-        if has_children:
-            tool_calls = []
-            has_other = any(child.name == "other" for child in children)
-            if not has_other:
-                children.append(
-                    TaxonomyNode(
-                        name="other",
-                        description=f"General {node.name} activities not matching specific subcategories.",
-                        icon=get_icon_for_path(node.name),
-                        tool_calls=list(node.tool_calls),
-                        children=[],
-                    )
+        if not has_other:
+            children.append(
+                TaxonomyNode(
+                    name="other",
+                    description=f"General {node.name} activities not matching specific subcategories.",
+                    icon=get_icon_for_path(node.name),
+                    tool_calls=parent_tool_calls,
+                    children=[],
                 )
-            else:
-                for i, child in enumerate(children):
-                    if child.name == "other" and not child.tool_calls:
-                        children[i] = TaxonomyNode(
-                            name="other",
-                            description=child.description
-                            or f"General {node.name} activities not matching specific subcategories.",
-                            icon=child.icon or get_icon_for_path(node.name),
-                            tool_calls=list(node.tool_calls),
-                            children=child.children or [],
-                        )
-                        break
-            normalized_children = [
-                self._normalize_child_node(child, node.name) for child in children
-            ]
+            )
         else:
-            tool_calls = node.tool_calls or []
-            normalized_children = []
+            for i, child in enumerate(children):
+                if child.name == "other" and not child.tool_calls:
+                    children[i] = TaxonomyNode(
+                        name="other",
+                        description=child.description
+                        or f"General {node.name} activities not matching specific subcategories.",
+                        icon=child.icon or get_icon_for_path(node.name),
+                        tool_calls=parent_tool_calls,
+                        children=child.children or [],
+                    )
+                    break
+
+        has_children = len(children) > 0
+        tool_calls = [] if has_children else parent_tool_calls
+
+        normalized_children = [
+            self._normalize_child_node(child, node.name) for child in children
+        ]
 
         return TaxonomyNode(
             name=node.name,
