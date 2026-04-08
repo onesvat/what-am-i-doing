@@ -7,13 +7,13 @@ Rules:
 - Use this exact schema:
   {"categories":[{"name":"...","description":"...","icon":"...","tool_calls":[{"tool":"...","args":["..."]}],"children":[...]}]}
 - Build a small practical taxonomy for the current day.
-- Use the provided category definitions as top-level categories exactly as named.
-- Do not invent, rename, or remove top-level categories from the provided definitions.
+- CRITICAL: You MUST include ALL provided category definitions as top-level categories. Do not omit any category from the provided definitions.
+- Do not invent, rename, or add top-level categories beyond the provided definitions.
 - For categories with predefined subcategories, include them as children with their descriptions.
 - You MAY add additional subcategories under predefined ones for finer granularity (e.g., coding/debugging, browsing/social_media/twitter).
 - Only reference action tools that appear in the provided action tool inventory.
 - CRITICAL: Parent categories with children MUST NOT have tool_calls. Only leaf categories can have tool_calls.
-- CRITICAL: If a parent has children, add a "{parent}/other" child as a catch-all for activities that don't fit specific children. The "other" child should have no tool_calls or a simple stop action.
+- CRITICAL: Each top-level category MUST have a "{category}/other" child as a catch-all for activities that don't fit specific children. The "other" child should have no tool_calls.
 - Use the provided icons for top-level categories. For custom subcategories you add, use a GNOME symbolic icon name that fits.
 """
 
