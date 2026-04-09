@@ -9,7 +9,7 @@ from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
-from textual.widgets import Button, Static
+from textual.widgets import Static
 
 from ..data import format_duration, spans_by_day, weekly_summary
 from ..theme import ColorTheme, get_theme
@@ -21,15 +21,12 @@ class WeekChanged(Message):
         self.week_start = week_start
 
 
-class WeekHeader(Widget):
+class WeekHeader(Static):
     DEFAULT_CSS = """
     WeekHeader {
-        height: 3;
-        padding: 1;
+        height: 1;
+        padding: 0 1;
         background: $surface;
-    }
-    WeekHeader Button {
-        width: 8;
     }
     """
 
@@ -39,28 +36,22 @@ class WeekHeader(Widget):
         super().__init__(**kwargs)
         self._spans = spans
 
-    def compose(self) -> ComposeResult:
-        with Horizontal():
-            yield Button("◀ Prev", id="prev-week")
-            yield Static("", id="week-display")
-            yield Button("Next ▶", id="next-week")
+    def render(self) -> Text:
+        text = Text()
+        text.append("‹ ", style="dim")
+        week_end = self.week_start + timedelta(days=6)
+        start_str = self.week_start.strftime("%b %d")
+        end_str = week_end.strftime("%b %d, %Y")
+        summary = weekly_summary(self._spans, self.week_start)
+        dur = format_duration(summary["total_seconds"])
+        text.append(f"{start_str} – {end_str}", style="bold")
+        text.append("  —  Total: ", style="dim")
+        text.append(dur, style="bold")
+        text.append(" ›", style="dim")
+        return text
 
     def watch_week_start(self, week_start: datetime) -> None:
-        display = self.query_one("#week-display", Static)
-        week_end = week_start + timedelta(days=6)
-        start_str = week_start.strftime("%b %d")
-        end_str = week_end.strftime("%b %d, %Y")
-        summary = weekly_summary(self._spans, week_start)
-        dur = format_duration(summary["total_seconds"])
-        display.update(Text(f"{start_str} – {end_str}  —  Total: {dur}"))
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "prev-week":
-            self.week_start = self.week_start - timedelta(weeks=1)
-            self.post_message(WeekChanged(self.week_start))
-        elif event.button.id == "next-week":
-            self.week_start = self.week_start + timedelta(weeks=1)
-            self.post_message(WeekChanged(self.week_start))
+        self.refresh()
 
 
 class DayColumn(Widget):
@@ -68,7 +59,7 @@ class DayColumn(Widget):
     DayColumn {
         width: 1fr;
         height: auto;
-        padding: 1;
+        padding: 0 1;
     }
     """
 
@@ -81,10 +72,13 @@ class DayColumn(Widget):
         self._theme = theme
 
     def compose(self) -> ComposeResult:
+        theme = self._theme
         day_name = self._date.strftime("%a")
         day_num = self._date.strftime("%d")
-        yield Static(f"{day_name} {day_num}")
-        yield Static("")
+        header = Text()
+        header.append(f"{day_name} ", style="dim")
+        header.append(day_num, style="bold")
+        yield Static(header)
 
         totals: dict[str, float] = {}
         for span in self._spans:
@@ -96,14 +90,18 @@ class DayColumn(Widget):
             :6
         ]:
             dur = format_duration(seconds)
-            yield Static(f"{top[:12]:12} {dur:>5}")
+            text = Text()
+            text.append("● ", style=f"{theme.accent}")
+            text.append(f"{top[:10]:10}", style="bold")
+            text.append(f" {dur:>5}", style="dim")
+            yield Static(text)
 
 
 class WeeklyGrid(Widget):
     DEFAULT_CSS = """
     WeeklyGrid {
         height: auto;
-        padding: 1;
+        padding: 0 1;
     }
     """
 

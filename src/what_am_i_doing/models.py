@@ -13,8 +13,10 @@ from .constants import (
     DISCONNECTED_ICON,
     PANEL_KIND_CLASSIFIED,
     PANEL_KIND_DISCONNECTED,
+    PANEL_KIND_PAUSED,
     PANEL_KIND_UNCLASSIFIED,
     PANEL_SCHEMA_VERSION,
+    PAUSED_ICON,
     STATE_DIR,
     UNCLASSIFIED_ICON,
 )
@@ -176,6 +178,7 @@ class PanelStateRecord(BaseModel):
         PANEL_KIND_CLASSIFIED,
         PANEL_KIND_UNCLASSIFIED,
         PANEL_KIND_DISCONNECTED,
+        PANEL_KIND_PAUSED,
     ]
     top_level_id: str | None = None
     top_level_label: str | None = None
@@ -203,9 +206,12 @@ class PanelStateRecord(BaseModel):
         else:
             if self.path is not None:
                 raise ValueError("non-classified panel state cannot include a path")
-            if self.kind == PANEL_KIND_DISCONNECTED and self.taxonomy_hash is not None:
+            if (
+                self.kind in (PANEL_KIND_DISCONNECTED, PANEL_KIND_PAUSED)
+                and self.taxonomy_hash is not None
+            ):
                 raise ValueError(
-                    "disconnected panel state cannot include taxonomy hash"
+                    "disconnected/paused panel state cannot include taxonomy hash"
                 )
         return self
 
@@ -269,6 +275,24 @@ class PanelStateRecord(BaseModel):
             taxonomy_hash=None,
         )
 
+    @classmethod
+    def paused(
+        cls,
+        *,
+        revision: int,
+        published_at: datetime,
+    ) -> "PanelStateRecord":
+        return cls(
+            revision=revision,
+            kind=PANEL_KIND_PAUSED,
+            top_level_id=None,
+            top_level_label=None,
+            icon_name=PAUSED_ICON,
+            path=None,
+            published_at=published_at,
+            taxonomy_hash=None,
+        )
+
     def payload(self) -> dict[str, Any]:
         return self.model_dump(mode="json", exclude={"revision"})
 
@@ -302,6 +326,7 @@ class AppPaths:
     taxonomy_json: Path
     status_json: Path
     spans_log: Path
+    tracking_json: Path
 
     @classmethod
     def default(cls) -> "AppPaths":
@@ -317,6 +342,7 @@ class AppPaths:
             taxonomy_json=state_dir / "taxonomy.json",
             status_json=state_dir / "status.json",
             spans_log=state_dir / "spans.jsonl",
+            tracking_json=state_dir / "tracking.json",
         )
 
 

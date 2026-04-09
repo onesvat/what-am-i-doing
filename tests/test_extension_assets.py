@@ -32,6 +32,15 @@ class ExtensionAssetsTest(unittest.TestCase):
         self.assertEqual(["49"], metadata["shell-version"])
         self.assertTrue(metadata["url"].startswith("https://"))
 
+    def test_extension_stats_hide_sub_minute_rows(self) -> None:
+        extension_path = ROOT / "extensions" / "gnome" / "extension.js"
+        source = extension_path.read_text(encoding="utf-8")
+
+        self.assertIn("_shouldShowStatRow(seconds)", source)
+        self.assertIn("return seconds >= 60;", source)
+        self.assertIn("if (this._shouldShowStatRow(catSeconds))", source)
+        self.assertIn("if (this._shouldShowStatRow(childSeconds))", source)
+
 
 if __name__ == "__main__":
     unittest.main()

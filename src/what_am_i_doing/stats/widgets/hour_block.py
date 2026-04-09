@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 from rich.text import Text
 from textual.widget import Widget
-from textual.widgets import Static
 
 from ..data import format_duration
-from ..theme import ColorTheme, get_theme
+from ..theme import ColorTheme, get_theme, intensity_level, level_color
 
 
 class HourBlock(Widget):
@@ -17,12 +15,6 @@ class HourBlock(Widget):
         height: 1;
         padding: 0 1;
         margin: 0;
-    }
-    HourBlock.empty {
-        color: $text-muted;
-    }
-    HourBlock.filled {
-        color: $text;
     }
     """
 
@@ -41,15 +33,26 @@ class HourBlock(Widget):
     def render(self) -> Text:
         hour_str = f"{self.hour:02d}:00"
         if not self._spans:
-            self.add_class("empty")
-            self.remove_class("filled")
-            return Text(hour_str + "  —", style="dim")
-
-        self.add_class("filled")
-        self.remove_class("empty")
+            text = Text()
+            text.append(hour_str, style="dim")
+            return text
 
         total_seconds = sum(s.duration_seconds for s in self._spans)
         primary = max(self._spans, key=lambda s: s.duration_seconds)
         label = primary.path if "/" in primary.path else primary.top_level
         dur = format_duration(total_seconds)
-        return Text(f"{hour_str}  {label} ({dur})")
+
+        max_seconds = 3600.0
+        bar_width = 12
+        level = intensity_level(total_seconds, max_seconds)
+        color = level_color(self._theme, level)
+        filled = max(1, int(total_seconds / max_seconds * bar_width))
+        filled = min(filled, bar_width)
+
+        text = Text()
+        text.append(hour_str + " ", style="dim")
+        text.append("█" * filled, style=color)
+        text.append("░" * (bar_width - filled), style="dim")
+        text.append(f" {label[:24]}", style="bold")
+        text.append(f" {dur}", style="dim")
+        return text

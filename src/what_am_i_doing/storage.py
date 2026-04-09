@@ -90,3 +90,15 @@ def load_spans(path: Path) -> list[SpanRecord]:
 
 def parse_timestamp(value: str) -> datetime:
     return datetime.fromisoformat(value)
+
+
+def load_tracking(path: Path) -> bool:
+    if not path.exists():
+        return True
+    with path.open("r", encoding="utf-8") as handle:
+        raw = json.loads(handle.read())
+    return bool(raw.get("enabled", True))
+
+
+def save_tracking(path: Path, enabled: bool) -> None:
+    path.write_text(json.dumps({"enabled": enabled}, indent=2), encoding="utf-8")

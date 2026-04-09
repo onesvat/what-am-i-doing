@@ -66,7 +66,7 @@ class ContributionWeek(Widget):
         width: 2;
         height: 7;
         padding: 0;
-        margin-right: 1;
+        margin-right: 0;
     }
     """
 
@@ -100,7 +100,7 @@ class ContributionGraph(Widget):
     DEFAULT_CSS = """
     ContributionGraph {
         height: auto;
-        padding: 1;
+        padding: 0 1;
     }
     ContributionGraph Horizontal {
         height: auto;

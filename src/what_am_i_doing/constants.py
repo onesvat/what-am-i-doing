@@ -27,14 +27,17 @@ PANEL_SCHEMA_VERSION = 1
 PANEL_KIND_CLASSIFIED = "classified"
 PANEL_KIND_UNCLASSIFIED = "unclassified"
 PANEL_KIND_DISCONNECTED = "disconnected"
+PANEL_KIND_PAUSED = "paused"
 RESERVED_CATEGORY_NAMES = {
     "unknown",
     "idle",
     PANEL_KIND_CLASSIFIED,
     PANEL_KIND_UNCLASSIFIED,
     PANEL_KIND_DISCONNECTED,
+    PANEL_KIND_PAUSED,
 }
 IDLE_ICON = "system-suspend-symbolic"
 UNCLASSIFIED_ICON = "help-about-symbolic"
 DISCONNECTED_ICON = "network-offline-symbolic"
+PAUSED_ICON = "media-playback-pause-symbolic"
 DEBUG_ENV_VAR = "WAID_DEBUG"

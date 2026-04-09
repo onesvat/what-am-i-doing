@@ -4,24 +4,25 @@ from typing import Any
 
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.containers import Vertical
 from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Static
 
 from ..data import category_totals, format_duration, Period
+from ..theme import get_theme
 
 
 class StatsTable(Static):
     DEFAULT_CSS = """
     StatsTable {
         height: auto;
-        padding: 1;
+        padding: 0 1;
     }
     """
 
     period: reactive[Period] = reactive(Period.TODAY)
     sort_by: reactive[str] = reactive("time")
+    theme_name: reactive[str] = reactive("green")
 
     def __init__(self, spans: list[Any], **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -33,7 +34,11 @@ class StatsTable(Static):
     def watch_sort_by(self, sort_by: str) -> None:
         self._refresh()
 
+    def watch_theme_name(self, theme_name: str) -> None:
+        self._refresh()
+
     def _refresh(self) -> None:
+        theme = get_theme(self.theme_name)
         totals = category_totals(self._spans, self.period)
         by_top = totals["by_top"]
         by_path = totals["by_path"]
@@ -46,31 +51,44 @@ class StatsTable(Static):
             Period.ALL: "All Time",
         }[self.period]
 
-        lines: list[str] = []
-        lines.append(f"\n{period_label}")
-        lines.append("")
-
         items = list(by_top.items())
         if self.sort_by == "time":
             items.sort(key=lambda x: x[1], reverse=True)
         else:
             items.sort(key=lambda x: x[0])
 
+        max_seconds = items[0][1] if items else 1
+        bar_width = 20
+
+        text = Text()
+        text.append(f"{period_label}\n", style="bold")
+        text.append("\n")
+
         for top, top_secs in items:
             dur = format_duration(top_secs)
             pct = (top_secs / total_seconds * 100) if total_seconds > 0 else 0
-            lines.append(f"  {top:<30} {dur:>8} ({pct:.0f}%)")
+            filled = max(1, int(top_secs / max_seconds * bar_width))
+            bar = "█" * filled + "░" * (bar_width - filled)
+
+            text.append(f"  {top:<24}", style=f"bold {theme.accent}")
+            text.append(f" {dur:>8}", style="bold")
+            text.append(f" ({pct:.0f}%)\n", style="dim")
+            text.append(f"  {bar}\n", style=f"{theme.levels[2]}")
+
             subs = [(p, s) for p, s in by_path.items() if p.startswith(top + "/")]
             subs.sort(key=lambda x: x[1], reverse=True)
             for path, secs in subs[:5]:
-                dur = format_duration(secs)
-                lines.append(f"    {path:<28} {dur:>8}")
+                sub_dur = format_duration(secs)
+                sub_pct = (secs / total_seconds * 100) if total_seconds > 0 else 0
+                text.append(f"    {path:<22}", style="dim")
+                text.append(f" {sub_dur:>8}", style="")
+                text.append(f" ({sub_pct:.0f}%)\n", style="dim")
 
-        lines.append("")
-        lines.append(f"  {'─' * 42}")
-        lines.append(f"  {'Total':<30} {format_duration(total_seconds):>8}")
+        text.append(f"\n  {'─' * 38}\n", style="dim")
+        text.append(f"  {'Total':<24}", style="bold")
+        text.append(f" {format_duration(total_seconds):>8}\n", style="bold")
 
-        self.update("\n".join(lines))
+        self.update(text)
 
     def on_mount(self) -> None:
         self._refresh()
@@ -91,14 +109,20 @@ class StatsView(Widget):
         self._spans = spans
 
     def compose(self) -> ComposeResult:
-        yield Static(
-            "\nPress t (today), w (week), m (month), y (all) to change period\nPress s to toggle sort\n"
-        )
         yield StatsTable(spans=self._spans)
 
     def watch_period(self, period: Period) -> None:
         table = self.query_one(StatsTable)
         table.period = period
 
+    def watch_theme_name(self, theme_name: str) -> None:
+        try:
+            table = self.query_one(StatsTable)
+            table.theme_name = theme_name
+        except Exception:
+            pass
+
     def on_mount(self) -> None:
-        self.query_one(StatsTable).period = self.period
+        table = self.query_one(StatsTable)
+        table.period = self.period
+        table.theme_name = self.theme_name

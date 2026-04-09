@@ -11,17 +11,21 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from what_am_i_doing.dbus_service import DaemonInterface
-from what_am_i_doing.models import PanelStateRecord, utcnow
+from what_am_i_doing.models import PanelStateRecord, RefreshResult, utcnow
 
 
-async def _noop_refresh() -> None:
-    return None
+async def _noop_refresh() -> RefreshResult:
+    return RefreshResult(success=True, message="ok")
+
+
+async def _noop_set_tracking(enabled: bool) -> None:
+    pass
 
 
 class DBusServiceTest(unittest.IsolatedAsyncioTestCase):
     def test_panel_properties_follow_internal_state(self) -> None:
         initial = PanelStateRecord.disconnected(revision=0, published_at=utcnow())
-        interface = DaemonInterface(_noop_refresh, initial)
+        interface = DaemonInterface(_noop_refresh, _noop_set_tracking, initial, True)
 
         self.assertEqual(0, interface.PanelRevision)
         self.assertEqual("disconnected", interface.PanelKind)
@@ -56,7 +60,9 @@ class DBusServiceTest(unittest.IsolatedAsyncioTestCase):
             published_at=utcnow(),
             taxonomy_hash="hash-1",
         )
-        interface = DaemonInterface(_noop_refresh, panel_state)
+        interface = DaemonInterface(
+            _noop_refresh, _noop_set_tracking, panel_state, True
+        )
 
         payload = json.loads(interface._legacy_status_json)
         self.assertEqual("unclassified", payload["current_path"])

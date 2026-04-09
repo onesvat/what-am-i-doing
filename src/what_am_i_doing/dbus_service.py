@@ -21,13 +21,17 @@ class DaemonInterface(ServiceInterface):
     def __init__(
         self,
         refresh_callback: Callable[[], Awaitable[RefreshResult]],
+        set_tracking_callback: Callable[[bool], Awaitable[None]],
         initial_panel_state: PanelStateRecord,
+        initial_tracking_enabled: bool,
     ) -> None:
         super().__init__(DAEMON_INTERFACE)
         self._refresh_callback = refresh_callback
+        self._set_tracking_callback = set_tracking_callback
         self._panel_state = initial_panel_state
         self._panel_state_json = initial_panel_state.payload_json()
         self._legacy_status_json = self._build_legacy_status_json(initial_panel_state)
+        self._tracking_enabled = initial_tracking_enabled
         self._set_panel_fields(initial_panel_state)
 
     @dbus_property(access=PropertyAccess.READ)
@@ -62,6 +66,10 @@ class DaemonInterface(ServiceInterface):
     def PanelTaxonomyHash(self) -> "s":
         return self._panel_taxonomy_hash
 
+    @dbus_property(access=PropertyAccess.READ)
+    def TrackingEnabled(self) -> "b":
+        return self._tracking_enabled
+
     @method()
     def GetPanelState(self) -> "us":
         return [self._panel_state.revision, self._panel_state_json]
@@ -75,6 +83,10 @@ class DaemonInterface(ServiceInterface):
         result = await self._refresh_callback()
         return [result.success, result.message]
 
+    @method()
+    async def SetTracking(self, enabled: "b") -> "":
+        await self._set_tracking_callback(enabled)
+
     @signal()
     def PanelStateChanged(self, revision: "u", payload: "s") -> "us":
         return [revision, payload]
@@ -82,6 +94,10 @@ class DaemonInterface(ServiceInterface):
     @signal()
     def StatusChanged(self, payload: "s") -> "s":
         return payload
+
+    @signal()
+    def TrackingStateChanged(self, enabled: "b") -> "b":
+        return enabled
 
     def update_panel_state(self, panel_state: PanelStateRecord) -> None:
         self._panel_state = panel_state
@@ -109,6 +125,11 @@ class DaemonInterface(ServiceInterface):
         self.PanelStateChanged(panel_state.revision, self._panel_state_json)
         self.StatusChanged(self._legacy_status_json)
 
+    def update_tracking_state(self, enabled: bool) -> None:
+        self._tracking_enabled = enabled
+        self.emit_properties_changed({"TrackingEnabled": self._tracking_enabled})
+        self.TrackingStateChanged(enabled)
+
     def _set_panel_fields(self, panel_state: PanelStateRecord) -> None:
         self._panel_revision = panel_state.revision
         self._panel_kind = panel_state.kind
@@ -133,12 +154,20 @@ class DaemonInterface(ServiceInterface):
 class DaemonDBusService:
     def __init__(
         self,
-        refresh_callback: Callable[[], Awaitable[None]],
+        refresh_callback: Callable[[], Awaitable[RefreshResult]],
+        set_tracking_callback: Callable[[bool], Awaitable[None]],
         initial_panel_state: PanelStateRecord,
+        initial_tracking_enabled: bool,
     ) -> None:
         self._refresh_callback = refresh_callback
+        self._set_tracking_callback = set_tracking_callback
         self._bus: MessageBus | None = None
-        self.interface = DaemonInterface(refresh_callback, initial_panel_state)
+        self.interface = DaemonInterface(
+            refresh_callback,
+            set_tracking_callback,
+            initial_panel_state,
+            initial_tracking_enabled,
+        )
 
     async def start(self) -> None:
         self._bus = await MessageBus(bus_type=BusType.SESSION).connect()
@@ -147,6 +176,9 @@ class DaemonDBusService:
 
     def update_panel_state(self, panel_state: PanelStateRecord) -> None:
         self.interface.update_panel_state(panel_state)
+
+    def update_tracking_state(self, enabled: bool) -> None:
+        self.interface.update_tracking_state(enabled)
 
 
 async def daemon_status_payload() -> dict[str, object]:
@@ -167,6 +199,8 @@ async def daemon_status_payload() -> dict[str, object]:
                 "icon_name": values["PanelIconName"].value,
                 "published_at": values["PanelPublishedAt"].value,
                 "taxonomy_hash": values["PanelTaxonomyHash"].value or None,
+                "tracking_enabled": values.get("TrackingEnabled", None)
+                and values["TrackingEnabled"].value,
             }
         interface = obj.get_interface(DAEMON_INTERFACE)
         revision, payload_json = await interface.call_get_panel_state()
@@ -184,5 +218,28 @@ async def daemon_refresh_taxonomy() -> tuple[bool, str]:
         obj = bus.get_proxy_object(DAEMON_BUS_NAME, DAEMON_OBJECT_PATH, introspection)
         interface = obj.get_interface(DAEMON_INTERFACE)
         return await interface.call_refresh_taxonomy()
+    finally:
+        bus.disconnect()
+
+
+async def daemon_get_tracking() -> bool:
+    bus = await MessageBus(bus_type=BusType.SESSION).connect()
+    try:
+        introspection = await bus.introspect(DAEMON_BUS_NAME, DAEMON_OBJECT_PATH)
+        obj = bus.get_proxy_object(DAEMON_BUS_NAME, DAEMON_OBJECT_PATH, introspection)
+        properties = obj.get_interface(PROPERTIES_INTERFACE)
+        value = await properties.call_get(DAEMON_INTERFACE, "TrackingEnabled")
+        return bool(value.value)
+    finally:
+        bus.disconnect()
+
+
+async def daemon_set_tracking(enabled: bool) -> None:
+    bus = await MessageBus(bus_type=BusType.SESSION).connect()
+    try:
+        introspection = await bus.introspect(DAEMON_BUS_NAME, DAEMON_OBJECT_PATH)
+        obj = bus.get_proxy_object(DAEMON_BUS_NAME, DAEMON_OBJECT_PATH, introspection)
+        interface = obj.get_interface(DAEMON_INTERFACE)
+        await interface.call_set_tracking(enabled)
     finally:
         bus.disconnect()

@@ -21,8 +21,10 @@ const DAEMON_INTERFACE = 'org.waid.Daemon';
 const PANEL_KIND_CLASSIFIED = 'classified';
 const PANEL_KIND_UNCLASSIFIED = 'unclassified';
 const PANEL_KIND_DISCONNECTED = 'disconnected';
+const PANEL_KIND_PAUSED = 'paused';
 const UNCLASSIFIED_ICON = 'help-about-symbolic';
 const DISCONNECTED_ICON = 'network-offline-symbolic';
+const PAUSED_ICON = 'media-playback-pause-symbolic';
 
 const STATE_DIR = GLib.build_filenamev([GLib.get_home_dir(), '.local', 'state', 'waid']);
 const STATUS_FILE = GLib.build_filenamev([STATE_DIR, 'status.json']);
@@ -87,6 +89,7 @@ export default class WaidExtension extends Extension {
         this._trackerStateJson = '';
         this._titleWatchSignalId = null;
         this._titleWatchWindow = null;
+        this._trackingEnabled = true;
         this._updateTrackerSnapshot({emitSignal: false});
 
         this._dbusImpl = Gio.DBusExportedObject.wrapJSObject(TRACKER_IFACE, this);
@@ -244,6 +247,8 @@ export default class WaidExtension extends Extension {
             );
         } else if (status.kind === PANEL_KIND_UNCLASSIFIED) {
             this._indicator.setStatus(PANEL_KIND_UNCLASSIFIED, status.icon_name || UNCLASSIFIED_ICON);
+        } else if (status.kind === PANEL_KIND_PAUSED) {
+            this._indicator.setStatus(PANEL_KIND_PAUSED, status.icon_name || PAUSED_ICON);
         } else {
             this._setDisconnected();
         }
@@ -272,6 +277,11 @@ export default class WaidExtension extends Extension {
 
     _requestRefresh() {
         this._callDaemon('RefreshTaxonomy');
+    }
+
+    _setTracking(enabled) {
+        const params = GLib.Variant.new_tuple([GLib.Variant.new_boolean(enabled)]);
+        this._callDaemon('SetTracking', params);
     }
 
     _callDaemon(method, params = null) {
@@ -365,16 +375,20 @@ export default class WaidExtension extends Extension {
                 const catHasChildren = (cat.children && cat.children.length > 0);
                 
                 total += catSeconds;
-                
-                this._addRadioStatRow(cat.name, catPath, catSeconds, catIcon, false, catSelected, catHasChildren);
+
+                if (this._shouldShowStatRow(catSeconds)) {
+                    this._addRadioStatRow(cat.name, catPath, catSeconds, catIcon, false, catSelected, catHasChildren);
+                }
                 
                 for (const child of (cat.children || [])) {
                     const childPath = `${cat.name}/${child.name}`;
                     const childSeconds = catData.subs.get(childPath) || 0;
                     const childSelected = currentPath === childPath;
                     const childIcon = this._taxonomyIcons.get(childPath) || null;
-                    
-                    this._addRadioStatRow(child.name, childPath, childSeconds, childIcon, true, childSelected, false);
+
+                    if (this._shouldShowStatRow(childSeconds)) {
+                        this._addRadioStatRow(child.name, childPath, childSeconds, childIcon, true, childSelected, false);
+                    }
                 }
             }
         } else {
@@ -420,6 +434,11 @@ export default class WaidExtension extends Extension {
             }
         });
         this._indicator.menu.addMenuItem(configItem);
+
+        const isPaused = this._currentStatus && this._currentStatus.kind === PANEL_KIND_PAUSED;
+        const trackingItem = new PopupMenu.PopupMenuItem(isPaused ? 'Resume Tracking' : 'Pause Tracking');
+        trackingItem.connect('activate', () => this._setTracking(!isPaused));
+        this._indicator.menu.addMenuItem(trackingItem);
     }
 
     _currentActivityLabel() {
@@ -427,6 +446,7 @@ export default class WaidExtension extends Extension {
         if (!s) return PANEL_KIND_DISCONNECTED;
         if (s.kind === PANEL_KIND_CLASSIFIED) return s.path || s.top_level_label || PANEL_KIND_CLASSIFIED;
         if (s.kind === PANEL_KIND_UNCLASSIFIED) return PANEL_KIND_UNCLASSIFIED;
+        if (s.kind === PANEL_KIND_PAUSED) return PANEL_KIND_PAUSED;
         return PANEL_KIND_DISCONNECTED;
     }
 
@@ -470,6 +490,10 @@ export default class WaidExtension extends Extension {
         item.add_child(durLabel);
         
         this._indicator.menu.addMenuItem(item);
+    }
+
+    _shouldShowStatRow(seconds) {
+        return seconds >= 60;
     }
 
     _formatDuration(seconds) {

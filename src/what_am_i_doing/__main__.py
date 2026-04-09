@@ -36,13 +36,18 @@ from .constants import (
 )
 from .daemon import ActivityDaemon
 from .debug import follow_debug_entries, format_debug_entry, load_debug_entries
-from .dbus_service import daemon_refresh_taxonomy, daemon_status_payload
+from .dbus_service import (
+    daemon_get_tracking,
+    daemon_refresh_taxonomy,
+    daemon_set_tracking,
+    daemon_status_payload,
+)
 from .models import AppPaths
 from .resources import copy_resource_tree
 from .service import install_unit, run_journalctl, run_systemctl, unit_path
 from .storage import load_spans, load_status
-from .timeline import TimelineApp
-from .wizard import run_init_wizard
+from .stats import StatsApp
+from .wizard import CategoryTreeEditor, run_init_wizard
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -137,6 +142,14 @@ def build_parser() -> argparse.ArgumentParser:
     logs = service_sub.add_parser("logs")
     logs.add_argument("--lines", type=int, default=100)
     logs.add_argument("--follow", action="store_true")
+
+    tracking_parser = subparsers.add_parser("tracking")
+    tracking_sub = tracking_parser.add_subparsers(
+        dest="tracking_command", required=True
+    )
+    tracking_sub.add_parser("status")
+    tracking_sub.add_parser("pause")
+    tracking_sub.add_parser("resume")
 
     return parser
 
@@ -286,7 +299,7 @@ def _run_stats(json_output: bool, period: str) -> None:
 
 def _run_timeline(view: str, theme: str) -> None:
     spans = load_spans(AppPaths.default().spans_log)
-    app = TimelineApp(spans=spans, start_view=view)
+    app = StatsApp(spans=spans, start_view=view)
     if theme:
         app.theme_name = theme
     app.run()
@@ -295,6 +308,23 @@ def _run_timeline(view: str, theme: str) -> None:
 def _run_init(config_path: str, *, force: bool) -> None:
     path = Path(config_path).expanduser()
     if path.exists() and not force:
+        if not sys.stdin.isatty():
+            raise SystemExit(
+                f"config already exists at {path}; use --force to overwrite"
+            )
+        try:
+            response = (
+                input(f"Config exists at {path}. Update categories? [y/N] ")
+                .strip()
+                .lower()
+            )
+        except EOFError:
+            raise SystemExit(
+                f"config already exists at {path}; use --force to overwrite"
+            ) from None
+        if response == "y":
+            _update_categories_only(config_path, path)
+            return
         raise SystemExit(f"config already exists at {path}; use --force to overwrite")
     answers = run_init_wizard()
     config = build_minimal_config(
@@ -316,6 +346,29 @@ def _run_init(config_path: str, *, force: bool) -> None:
     print("  waid extension install")
     print(f"  gnome-extensions enable {EXTENSION_UUID}")
     print("  waid service install --now")
+
+
+def _update_categories_only(config_path: str, path: Path) -> None:
+    """Update only the categories section of existing config."""
+    config = load_config(config_path)
+    current_paths = [cat.name for cat in config.generator.categories]
+    category_paths = CategoryTreeEditor(initial_paths=current_paths).run()
+    category_notes: dict[str, str] = {}
+    for path_item in category_paths:
+        existing = next(
+            (cat.note for cat in config.generator.categories if cat.name == path_item),
+            "",
+        )
+        category_notes[path_item] = existing
+    from .config import GeneratorCategorySeed
+
+    config.generator.categories = [
+        GeneratorCategorySeed(name=path, note=note)
+        for path, note in category_notes.items()
+    ]
+    save_config(config_path, config)
+    print(f"updated categories in: {path}")
+    print("run 'waid refresh' to regenerate taxonomy")
 
 
 def _run_config_command(args: argparse.Namespace) -> None:
@@ -541,6 +594,35 @@ def load_raw_events_for_window_selection(path: Path) -> list[dict[str, Any]]:
         return []
 
 
+async def _run_tracking_command(args: argparse.Namespace) -> None:
+    if args.tracking_command == "status":
+        try:
+            enabled = await daemon_get_tracking()
+            print("enabled" if enabled else "paused")
+        except (DBusError, RuntimeError):
+            status = load_status(AppPaths.default().status_json)
+            if status is not None and status.kind == "paused":
+                print("paused")
+            else:
+                print("enabled (daemon not reachable, assuming enabled)")
+        return
+    if args.tracking_command == "pause":
+        try:
+            await daemon_set_tracking(False)
+            print("tracking paused")
+        except (DBusError, RuntimeError):
+            raise SystemExit("daemon not reachable")
+        return
+    if args.tracking_command == "resume":
+        try:
+            await daemon_set_tracking(True)
+            print("tracking resumed")
+        except (DBusError, RuntimeError):
+            raise SystemExit("daemon not reachable")
+        return
+    raise SystemExit(2)
+
+
 def main() -> None:
     args = build_parser().parse_args()
     if args.command == "init":
@@ -578,6 +660,9 @@ def main() -> None:
         return
     if args.command == "service":
         _run_service_command(args)
+        return
+    if args.command == "tracking":
+        asyncio.run(_run_tracking_command(args))
         return
     raise SystemExit(2)
 

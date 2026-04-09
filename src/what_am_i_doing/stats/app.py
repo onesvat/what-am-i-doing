@@ -6,11 +6,12 @@ from json import dumps, loads
 from pathlib import Path
 from typing import Any
 
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal
+from textual.containers import Container
 from textual.reactive import reactive
-from textual.widgets import Button, Footer, Header, Static
+from textual.widgets import Footer, Header, Static
 
 from ..models import SpanRecord
 from .data import Period
@@ -37,48 +38,32 @@ class ViewTabs(Static):
     DEFAULT_CSS = """
     ViewTabs {
         height: 1;
-        padding: 1;
+        padding: 0 1;
         background: $surface;
-    }
-    ViewTabs Button {
-        width: auto;
-        min-width: 10;
-        margin-right: 1;
-    }
-    ViewTabs Button.active {
-        background: $accent;
-        color: $text;
     }
     """
 
     current_view: reactive[ViewMode] = reactive(ViewMode.DAILY)
+    theme_name: reactive[str] = reactive("green")
 
-    def compose(self) -> ComposeResult:
-        with Horizontal():
-            for mode in ViewMode:
-                yield Button(
-                    VIEW_LABELS[mode],
-                    id=f"tab-{mode.value}",
-                    classes="active" if mode == self.current_view else "",
-                )
+    def render(self) -> Text:
+        theme = get_theme(self.theme_name)
+        text = Text()
+        for i, mode in enumerate(ViewMode):
+            if i > 0:
+                text.append("  ")
+            label = VIEW_LABELS[mode]
+            if mode == self.current_view:
+                text.append(f"[{label}]", style=f"bold {theme.accent}")
+            else:
+                text.append(f" {label} ", style="dim")
+        return text
 
     def watch_current_view(self, view: ViewMode) -> None:
-        for btn in self.query(Button):
-            if btn.id == f"tab-{view.value}":
-                btn.add_class("active")
-            else:
-                btn.remove_class("active")
+        self.refresh()
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id and event.button.id.startswith("tab-"):
-            view_name = event.button.id.replace("tab-", "")
-            self.current_view = ViewMode(view_name)
-            self.app.post_message(ViewChanged(self.current_view))
-
-
-class ViewChanged:
-    def __init__(self, view: ViewMode) -> None:
-        self.view = view
+    def watch_theme_name(self, theme_name: str) -> None:
+        self.refresh()
 
 
 SETTINGS_PATH = Path.home() / ".config" / "waid" / "viewer.json"
@@ -98,9 +83,9 @@ def save_settings(settings: dict[str, Any]) -> None:
     SETTINGS_PATH.write_text(dumps(settings, indent=2))
 
 
-class TimelineApp(App[None]):
+class StatsApp(App[None]):
     CSS = """
-    TimelineApp {
+    StatsApp {
         background: $surface;
     }
     Container {
@@ -152,6 +137,7 @@ class TimelineApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.query_one(ViewTabs).theme_name = self.theme_name
         if self._start_view:
             try:
                 self.current_view = ViewMode(self._start_view)
@@ -177,6 +163,10 @@ class TimelineApp(App[None]):
         tabs.current_view = view
 
     def watch_theme_name(self, theme_name: str) -> None:
+        try:
+            self.query_one(ViewTabs).theme_name = theme_name
+        except Exception:
+            pass
         for view_id in ["view-overview", "view-daily", "view-weekly", "view-stats"]:
             try:
                 view = self.query_one(f"#{view_id}")
@@ -255,6 +245,3 @@ class TimelineApp(App[None]):
 
     def action_refresh(self) -> None:
         self.refresh()
-
-    def on_view_changed(self, event: ViewChanged) -> None:
-        self.current_view = event.view

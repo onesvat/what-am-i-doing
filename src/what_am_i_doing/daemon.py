@@ -13,6 +13,7 @@ from .config import AppConfig
 from .constants import (
     PANEL_KIND_CLASSIFIED,
     PANEL_KIND_DISCONNECTED,
+    PANEL_KIND_PAUSED,
     PANEL_KIND_UNCLASSIFIED,
 )
 from .debug import DebugLogger, debug_enabled
@@ -34,9 +35,11 @@ from .storage import (
     ensure_state_dir,
     load_status,
     load_taxonomy,
+    load_tracking,
     save_span,
     save_status,
     save_taxonomy,
+    save_tracking,
 )
 
 
@@ -47,6 +50,7 @@ class RuntimeState:
     panel_state: PanelStateRecord
     last_classified_started_at: datetime | None
     last_snapshot: ProviderSnapshot | None
+    tracking_enabled: bool
 
 
 class ActivityDaemon:
@@ -64,7 +68,10 @@ class ActivityDaemon:
         self.runtime = self._load_runtime_state()
         self._refresh_lock = asyncio.Lock()
         self.dbus_service = DaemonDBusService(
-            self.refresh_taxonomy, self.runtime.panel_state
+            self.refresh_taxonomy,
+            self.set_tracking,
+            self.runtime.panel_state,
+            self.runtime.tracking_enabled,
         )
 
     def _load_runtime_state(self) -> RuntimeState:
@@ -82,12 +89,14 @@ class ActivityDaemon:
             if panel_state.kind == PANEL_KIND_CLASSIFIED
             else None
         )
+        tracking_enabled = load_tracking(self.paths.tracking_json)
         return RuntimeState(
             taxonomy=taxonomy,
             taxonomy_hash=taxonomy_hash,
             panel_state=panel_state,
             last_classified_started_at=last_classified_started_at,
             last_snapshot=None,
+            tracking_enabled=tracking_enabled,
         )
 
     async def refresh_taxonomy(self) -> RefreshResult:
@@ -129,10 +138,25 @@ class ActivityDaemon:
             await self._reconcile_panel_state_after_taxonomy_refresh()
             return result
 
+    async def set_tracking(self, enabled: bool) -> None:
+        if self.runtime.tracking_enabled == enabled:
+            return
+        self.runtime.tracking_enabled = enabled
+        save_tracking(self.paths.tracking_json, enabled)
+        self.dbus_service.update_tracking_state(enabled)
+        self.debug.log("tracking_state_changed", enabled=enabled)
+        if not enabled:
+            await self._publish_paused()
+        else:
+            await self._publish_disconnected(reason="tracking_resumed")
+
     async def run(self) -> None:
         await self.dbus_service.start()
         await self.refresh_taxonomy()
-        await self._publish_disconnected(reason="startup")
+        if self.runtime.tracking_enabled:
+            await self._publish_disconnected(reason="startup")
+        else:
+            await self._publish_paused()
         await asyncio.gather(self._refresh_loop(), self._provider_loop())
 
     async def _refresh_loop(self) -> None:
@@ -152,6 +176,8 @@ class ActivityDaemon:
                 await asyncio.sleep(1)
 
     async def handle_snapshot(self, snapshot: ProviderSnapshot) -> None:
+        if not self.runtime.tracking_enabled:
+            return
         self.runtime.last_snapshot = snapshot
         state = snapshot.state
         self._log_raw_event(snapshot)
@@ -238,6 +264,21 @@ class ActivityDaemon:
             published_at=now,
         )
         await self._commit_panel_state(panel_state, previous=previous, reason=reason)
+
+    async def _publish_paused(self) -> None:
+        if self.runtime.panel_state.kind == PANEL_KIND_PAUSED:
+            return
+        previous = self._current_selection()
+        now = utcnow()
+        await self._close_previous_span(now)
+        self.runtime.last_classified_started_at = None
+        panel_state = PanelStateRecord.paused(
+            revision=self.runtime.panel_state.revision + 1,
+            published_at=now,
+        )
+        await self._commit_panel_state(
+            panel_state, previous=previous, reason="tracking_paused"
+        )
 
     async def _commit_panel_state(
         self,
