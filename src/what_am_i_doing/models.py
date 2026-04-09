@@ -109,16 +109,18 @@ class Taxonomy(BaseModel):
                 lines.append(f"  - {node.name}/{child.name}: {child.description}")
         return "\n".join(lines)
 
-    def validate_action_tool_refs(self, known_tools: set[str]) -> None:
+    def filter_unknown_action_tools(self, known_tools: set[str]) -> None:
         for node in self.categories:
-            self._validate_node_tools(node, known_tools)
+            self._filter_node_tools(node, known_tools)
 
-    def _validate_node_tools(self, node: TaxonomyNode, known_tools: set[str]) -> None:
+    def _filter_node_tools(self, node: TaxonomyNode, known_tools: set[str]) -> None:
+        valid_calls = []
         for call in node.tool_calls:
-            if call.tool not in known_tools:
-                raise ValueError(f"unknown action tool in taxonomy: {call.tool}")
+            if call.tool in known_tools:
+                valid_calls.append(call)
+        node.tool_calls = valid_calls
         for child in node.children:
-            self._validate_node_tools(child, known_tools)
+            self._filter_node_tools(child, known_tools)
 
     def fingerprint(self) -> str:
         payload = self.model_dump(mode="json", exclude_none=True)

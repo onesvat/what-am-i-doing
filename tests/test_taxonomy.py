@@ -72,7 +72,7 @@ class TaxonomyTest(unittest.TestCase):
         calls = taxonomy.tools_for_path("learning")
         self.assertEqual(["ha"], [call.tool for call in calls])
 
-    def test_rejects_unknown_action_tool_reference(self) -> None:
+    def test_filter_unknown_action_tools(self) -> None:
         taxonomy = Taxonomy(
             categories=[
                 TaxonomyNode(
@@ -82,8 +82,8 @@ class TaxonomyTest(unittest.TestCase):
                 )
             ]
         )
-        with self.assertRaises(ValueError):
-            taxonomy.validate_action_tool_refs({"sp_switch"})
+        taxonomy.filter_unknown_action_tools({"sp_switch"})
+        self.assertEqual([], taxonomy.categories[0].tool_calls)
 
 
 if __name__ == "__main__":

@@ -32,20 +32,38 @@ class InitAnswers:
 
 
 class CategoryTreeEditor:
-    def __init__(self) -> None:
+    def __init__(self, initial_paths: list[str] | None = None) -> None:
         self._top_categories = [(cat.name, cat.name) for cat in CATEGORY_CATALOG]
+        initial_top, initial_subs = self._parse_initial_paths(initial_paths or [])
         self._top_list = CheckboxList(
             self._top_categories,
-            default_values=[cat.name for cat in CATEGORY_CATALOG],
+            default_values=initial_top,
         )
         self._sub_lists: dict[str, CheckboxList] = {}
         for cat in CATEGORY_CATALOG:
             if cat.subcategories and cat.subcategory_selectable:
                 sub_values = [(sub, sub) for sub in cat.subcategories]
-                self._sub_lists[cat.name] = CheckboxList(sub_values, default_values=[])
+                self._sub_lists[cat.name] = CheckboxList(
+                    sub_values, default_values=initial_subs.get(cat.name, [])
+                )
         self._help = Label(
             "Space: toggle. Up/Down: navigate. Tab: switch panels. Enter: submit."
         )
+
+    def _parse_initial_paths(
+        self, paths: list[str]
+    ) -> tuple[list[str], dict[str, list[str]]]:
+        """Parse category paths into top-level and subcategory selections."""
+        top_level: set[str] = set()
+        subs: dict[str, list[str]] = {}
+        for path in paths:
+            top, _, child = path.partition("/")
+            top_level.add(top)
+            if child:
+                if top not in subs:
+                    subs[top] = []
+                subs[top].append(child)
+        return list(top_level), subs
 
     def run(self) -> list[str]:
         kb = KeyBindings()
@@ -221,11 +239,11 @@ def run_init_wizard() -> InitAnswers:
     action_tools = _collect_tools("action")
     generator_instructions = prompt(
         "Generator extra instructions: ",
-        default="Prefer matching today's planned tasks when possible.",
+        default="Create child categories only for active projects or repeated work you expect today.",
     ).strip()
     classifier_instructions = prompt(
         "Classifier extra instructions: ",
-        default="Prefer the most specific category. Use unclassified when no category fits.",
+        default="Classify by current intention, not just the app name. Prefer the most specific category.",
     ).strip()
     classifier_params = _collect_params()
     return InitAnswers(

@@ -12,41 +12,28 @@ generator:
   retry_count: 1
   categories:
     - name: coding
-    - name: research
+    - name: writing
+    - name: learning
     - name: communication
+    - name: admin
     - name: browsing
+    - name: media
+    - name: gaming
     - name: adult
   instructions: |
-    Prefer matching today's planned tasks when possible.
-    Today's tasks:
-    ${sp_today_tasks}
+    Keep the taxonomy small and practical.
+    Create child categories only for active projects, recurring work, or clearly distinct distractions.
 
 classifier:
   retry_count: 2
   instructions: |
+    Classify by current intention, not just the app name.
     Prefer the most specific category.
-    Use unclassified when no category fits.
-  params:
-    work_mode: focused
+    Switch immediately when the user's intention changes.
 
 tools:
-  context:
-    sp_today_tasks:
-      run: ["sp", "task", "list", "--today"]
-      timeout_seconds: 10
-  actions:
-    sp_start_task:
-      run: ["sp", "task", "start"]
-      timeout_seconds: 10
-    sp_stop_task:
-      run: ["sp", "task", "stop"]
-      timeout_seconds: 10
-    ha:
-      run: ["ha"]
-      timeout_seconds: 10
-    telegram:
-      run: ["telegram-send"]
-      timeout_seconds: 10
+  context: {}
+  actions: {}
 
 learned: []
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 import re
 from string import Template
@@ -13,6 +14,14 @@ from .models import Taxonomy, TaxonomyNode
 
 
 IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+@dataclass(slots=True)
+class ConfiguredCategoryGroup:
+    name: str
+    note: str = ""
+    explicit_top: bool = False
+    child_notes: dict[str, str] = field(default_factory=dict)
 
 
 class WindowExample(BaseModel):
@@ -174,67 +183,35 @@ class AppConfig(BaseModel):
     def state_dir(self) -> Path:
         return STATE_DIR
 
-    def seed_taxonomy(self) -> Taxonomy:
-        from .categories import (
-            get_description_for_path,
-            get_icon_for_path,
-            resolve_category_paths,
-        )
+    def configured_category_groups(self) -> list[ConfiguredCategoryGroup]:
+        groups: dict[str, ConfiguredCategoryGroup] = {}
+        for category in self.generator.categories:
+            top, _, child = category.name.partition("/")
+            group = groups.setdefault(top, ConfiguredCategoryGroup(name=top))
+            if child:
+                group.child_notes.setdefault(child, category.note)
+                continue
+            group.explicit_top = True
+            if category.note:
+                group.note = category.note
+        return list(groups.values())
 
-        paths = [cat.name for cat in self.generator.categories]
-        resolved = resolve_category_paths(paths)
-        categories: list[TaxonomyNode] = []
-        for path in resolved:
-            categories.append(
-                TaxonomyNode(
-                    name=path,
-                    description=get_description_for_path(path),
-                    icon=get_icon_for_path(path),
-                    tool_calls=[],
-                    children=[],
-                )
-            )
+    def seed_taxonomy(self) -> Taxonomy:
+        categories = [
+            self._seed_node_for_group(group) for group in self.configured_category_groups()
+        ]
         return Taxonomy(categories=categories)
 
     def normalize_generated_taxonomy(self, taxonomy: Taxonomy) -> Taxonomy:
-        from .categories import (
-            get_description_for_path,
-            get_icon_for_path,
-            resolve_category_paths,
-        )
-
-        existing = {node.name: node for node in taxonomy.categories}
-        paths = [cat.name for cat in self.generator.categories]
-        resolved = resolve_category_paths(paths)
+        canonical_taxonomy = self._canonicalize_taxonomy(taxonomy)
+        existing = {node.name: node for node in canonical_taxonomy.categories}
         categories: list[TaxonomyNode] = []
-        for path in resolved:
-            node = existing.get(path)
+        for group in self.configured_category_groups():
+            node = existing.get(group.name)
             if node is None:
-                description = get_description_for_path(path)
-                cat_seed = next(
-                    (c for c in self.generator.categories if c.name == path), None
-                )
-                if cat_seed and cat_seed.note and description.startswith("Broad"):
-                    description = cat_seed.note
-                categories.append(
-                    TaxonomyNode(
-                        name=path,
-                        description=description,
-                        icon=get_icon_for_path(path),
-                        tool_calls=[],
-                        children=[
-                            TaxonomyNode(
-                                name="other",
-                                description=f"General {path} activities not matching specific subcategories.",
-                                icon=get_icon_for_path(path),
-                                tool_calls=[],
-                                children=[],
-                            )
-                        ],
-                    )
-                )
+                categories.append(self._seed_node_for_group(group))
                 continue
-            normalized_node = self._normalize_node_with_catalog(node)
+            normalized_node = self._normalize_node_with_catalog(node, group)
             categories.append(normalized_node)
         idle_node = existing.get("idle")
         if idle_node is None:
@@ -251,35 +228,191 @@ class AppConfig(BaseModel):
             categories.append(idle_node)
         return Taxonomy(categories=categories)
 
-    def _normalize_node_with_catalog(self, node: TaxonomyNode) -> TaxonomyNode:
-        from .categories import get_description_for_path, get_icon_for_path
+    def _canonicalize_taxonomy(self, taxonomy: Taxonomy) -> Taxonomy:
+        categories: list[TaxonomyNode] = []
+        by_name: dict[str, TaxonomyNode] = {}
+        for node in taxonomy.categories:
+            top, _, child = node.name.partition("/")
+            if child:
+                parent = self._ensure_root_node(categories, by_name, top)
+                self._merge_child_node(
+                    parent,
+                    TaxonomyNode(
+                        name=child,
+                        description=node.description
+                        or self._configured_child_description(top, child),
+                        icon=node.icon or self._default_icon_for_path(f"{top}/{child}"),
+                        tool_calls=list(node.tool_calls or []),
+                        children=list(node.children or []),
+                    ),
+                )
+                continue
 
-        children = list(node.children or [])
-        has_other = any(child.name == "other" for child in children)
-        parent_tool_calls = list(node.tool_calls or [])
+            parent = self._ensure_root_node(categories, by_name, node.name)
+            parent.description = node.description or parent.description
+            parent.icon = node.icon or parent.icon
+            if node.tool_calls:
+                parent.tool_calls = list(node.tool_calls)
+            for child_node in node.children or []:
+                child_name = self._canonical_child_name(node.name, child_node.name)
+                self._merge_child_node(
+                    parent,
+                    TaxonomyNode(
+                        name=child_name,
+                        description=child_node.description
+                        or self._configured_child_description(node.name, child_name),
+                        icon=child_node.icon
+                        or self._default_icon_for_path(f"{node.name}/{child_name}"),
+                        tool_calls=list(child_node.tool_calls or []),
+                        children=list(child_node.children or []),
+                    ),
+                )
+        return Taxonomy(categories=categories)
 
-        if not has_other:
+    def _ensure_root_node(
+        self,
+        categories: list[TaxonomyNode],
+        by_name: dict[str, TaxonomyNode],
+        name: str,
+    ) -> TaxonomyNode:
+        node = by_name.get(name)
+        if node is not None:
+            return node
+        node = TaxonomyNode(
+            name=name,
+            description=self._configured_top_description(name),
+            icon=self._default_icon_for_path(name),
+            tool_calls=[],
+            children=[],
+        )
+        by_name[name] = node
+        categories.append(node)
+        return node
+
+    def _merge_child_node(self, parent: TaxonomyNode, child: TaxonomyNode) -> None:
+        for existing in parent.children:
+            if existing.name != child.name:
+                continue
+            existing.description = child.description or existing.description
+            existing.icon = child.icon or existing.icon
+            if child.tool_calls:
+                existing.tool_calls = list(child.tool_calls)
+            if child.children:
+                existing.children = list(child.children)
+            return
+        parent.children.append(child)
+
+    def _seed_node_for_group(self, group: ConfiguredCategoryGroup) -> TaxonomyNode:
+        from .categories import get_category_definition
+
+        cat_def = get_category_definition(group.name)
+        children: list[TaxonomyNode] = []
+        if group.explicit_top and cat_def is not None and cat_def.subcategories:
+            child_names = list(cat_def.subcategories)
+            child_names.extend(
+                child_name
+                for child_name in group.child_notes
+                if child_name not in cat_def.subcategories
+            )
+        else:
+            child_names = list(group.child_notes)
+
+        for child_name in child_names:
             children.append(
                 TaxonomyNode(
-                    name="other",
-                    description=f"General {node.name} activities not matching specific subcategories.",
-                    icon=get_icon_for_path(node.name),
-                    tool_calls=parent_tool_calls,
+                    name=child_name,
+                    description=self._configured_child_description(
+                        group.name, child_name, group.child_notes.get(child_name, "")
+                    ),
+                    icon=self._default_icon_for_path(f"{group.name}/{child_name}"),
+                    tool_calls=[],
                     children=[],
                 )
             )
-        else:
-            for i, child in enumerate(children):
-                if child.name == "other" and not child.tool_calls:
-                    children[i] = TaxonomyNode(
+
+        if group.explicit_top and children:
+            children.append(self._other_child_for(group.name))
+
+        return TaxonomyNode(
+            name=group.name,
+            description=self._configured_top_description(group.name, group.note),
+            icon=self._default_icon_for_path(group.name),
+            tool_calls=[],
+            children=children,
+        )
+
+    def _normalize_node_with_catalog(
+        self, node: TaxonomyNode, group: ConfiguredCategoryGroup
+    ) -> TaxonomyNode:
+        from .categories import (
+            get_category_definition,
+        )
+
+        children = list(node.children or [])
+        parent_tool_calls = list(node.tool_calls or [])
+
+        cat_def = get_category_definition(node.name)
+        if not group.explicit_top and group.child_notes:
+            allowed = set(group.child_notes)
+            children = [
+                child
+                for child in children
+                if self._canonical_child_name(node.name, child.name) in allowed
+            ]
+
+        known_child_names = {
+            self._canonical_child_name(node.name, child.name) for child in children
+        }
+        for child_name, note in group.child_notes.items():
+            if child_name in known_child_names:
+                continue
+            children.append(
+                TaxonomyNode(
+                    name=child_name,
+                    description=self._configured_child_description(
+                        node.name, child_name, note
+                    ),
+                    icon=self._default_icon_for_path(f"{node.name}/{child_name}"),
+                    tool_calls=[],
+                    children=[],
+                )
+            )
+
+        children = [
+            child
+            for child in children
+            if self._canonical_child_name(node.name, child.name) != "other"
+        ]
+        should_have_other = False
+        if group.explicit_top:
+            has_predefined_subs = (
+                cat_def is not None and cat_def.subcategories is not None
+            )
+            should_have_other = has_predefined_subs or len(children) > 0
+
+        if should_have_other:
+            other_child = next(
+                (
+                    child
+                    for child in node.children or []
+                    if self._canonical_child_name(node.name, child.name) == "other"
+                ),
+                None,
+            )
+            if other_child is None:
+                children.append(self._other_child_for(node.name, parent_tool_calls))
+            else:
+                children.append(
+                    TaxonomyNode(
                         name="other",
-                        description=child.description
-                        or f"General {node.name} activities not matching specific subcategories.",
-                        icon=child.icon or get_icon_for_path(node.name),
-                        tool_calls=parent_tool_calls,
-                        children=child.children or [],
+                        description=other_child.description
+                        or self._other_child_for(node.name).description,
+                        icon=other_child.icon
+                        or self._default_icon_for_path(node.name),
+                        tool_calls=list(other_child.tool_calls or parent_tool_calls),
+                        children=list(other_child.children or []),
                     )
-                    break
+                )
 
         has_children = len(children) > 0
         tool_calls = [] if has_children else parent_tool_calls
@@ -290,8 +423,9 @@ class AppConfig(BaseModel):
 
         return TaxonomyNode(
             name=node.name,
-            description=node.description or get_description_for_path(node.name),
-            icon=get_icon_for_path(node.name),
+            description=node.description
+            or self._configured_top_description(node.name, group.note),
+            icon=self._default_icon_for_path(node.name),
             tool_calls=tool_calls,
             children=normalized_children,
         )
@@ -299,19 +433,63 @@ class AppConfig(BaseModel):
     def _normalize_child_node(
         self, child: TaxonomyNode, parent_name: str
     ) -> TaxonomyNode:
-        from .categories import get_description_for_path, get_icon_for_path
-
-        child_name = child.name
-        if child_name.startswith(f"{parent_name}/"):
-            child_name = child_name[len(parent_name) + 1 :]
+        child_name = self._canonical_child_name(parent_name, child.name)
         child_path = f"{parent_name}/{child_name}"
         return TaxonomyNode(
             name=child_name,
-            description=child.description or get_description_for_path(child_path),
-            icon=child.icon or get_icon_for_path(child_path),
+            description=child.description
+            or self._configured_child_description(parent_name, child_name),
+            icon=child.icon or self._default_icon_for_path(child_path),
             tool_calls=child.tool_calls or [],
             children=child.children or [],
         )
+
+    def _configured_top_description(self, name: str, note: str = "") -> str:
+        from .categories import get_description_for_path
+
+        description = get_description_for_path(name)
+        if note:
+            if description.startswith("Broad "):
+                return note
+            if note not in description:
+                return f"{description} {note}".strip()
+        return description
+
+    def _configured_child_description(
+        self, parent_name: str, child_name: str, note: str = ""
+    ) -> str:
+        from .categories import get_description_for_path
+
+        if note:
+            return note
+        path = f"{parent_name}/{child_name}"
+        description = get_description_for_path(path)
+        if description == get_description_for_path(parent_name):
+            return f"Specific {parent_name} activity: {child_name.replace('_', ' ')}."
+        if description.startswith("Broad "):
+            return f"Specific {parent_name} activity: {child_name.replace('_', ' ')}."
+        return description
+
+    def _other_child_for(
+        self, parent_name: str, tool_calls: list[Any] | None = None
+    ) -> TaxonomyNode:
+        return TaxonomyNode(
+            name="other",
+            description=f"General {parent_name} activities not matching specific subcategories.",
+            icon=self._default_icon_for_path(parent_name),
+            tool_calls=list(tool_calls or []),
+            children=[],
+        )
+
+    def _canonical_child_name(self, parent_name: str, child_name: str) -> str:
+        if child_name.startswith(f"{parent_name}/"):
+            return child_name[len(parent_name) + 1 :]
+        return child_name
+
+    def _default_icon_for_path(self, path: str) -> str:
+        from .categories import get_icon_for_path
+
+        return get_icon_for_path(path)
 
     def render_generator_instructions(self, variables: dict[str, str]) -> str:
         return interpolate_text(self.generator.instructions, variables)

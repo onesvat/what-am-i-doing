@@ -25,15 +25,14 @@ class CategoriesTest(unittest.TestCase):
         names = [cat.name for cat in CATEGORY_CATALOG]
         expected = [
             "coding",
-            "research",
             "writing",
+            "learning",
             "communication",
             "admin",
+            "browsing",
             "media",
             "gaming",
-            "browsing",
             "adult",
-            "break",
         ]
         self.assertEqual(expected, names)
 
@@ -61,7 +60,7 @@ class CategoriesTest(unittest.TestCase):
 
     def test_get_description_for_path_returns_category_description(self) -> None:
         desc = get_description_for_path("coding")
-        self.assertIn("Development", desc)
+        self.assertIn("Software development", desc)
 
     def test_get_description_for_path_returns_subcategory_description(self) -> None:
         desc = get_description_for_path("communication/email")
@@ -106,16 +105,16 @@ class CategoriesTest(unittest.TestCase):
 
     def test_catalog_as_choices_returns_list(self) -> None:
         choices = catalog_as_choices()
-        self.assertEqual(10, len(choices))
+        self.assertEqual(9, len(choices))
         self.assertEqual("coding", choices[0][0])
 
     def test_resolve_category_paths_handles_custom_categories(self) -> None:
         """Custom categories not in catalog should still be returned."""
-        paths = ["coding", "custom_category", "research/custom_sub"]
+        paths = ["coding", "custom_category", "learning/custom_sub"]
         result = resolve_category_paths(paths)
         self.assertIn("coding", result)
         self.assertIn("custom_category", result)
-        self.assertIn("research/custom_sub", result)
+        self.assertIn("learning/custom_sub", result)
 
 
 if __name__ == "__main__":

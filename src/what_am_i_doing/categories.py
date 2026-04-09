@@ -16,48 +16,34 @@ CATEGORY_CATALOG: list[CategoryDefinition] = [
     CategoryDefinition(
         name="coding",
         icon="laptop-symbolic",
-        description="Development: writing code, debugging, IDEs, terminals, Git, tests.",
-    ),
-    CategoryDefinition(
-        name="research",
-        icon="book-open-symbolic",
-        description="Purposeful reading: docs, papers, tutorials, Stack Overflow, learning.",
+        description="Software development: coding, debugging, IDEs, terminals, Git, tests, build tools, and technical browser work that directly supports active development.",
     ),
     CategoryDefinition(
         name="writing",
         icon="document-edit-symbolic",
-        description="Creating text: documents, notes, blog posts, emails (composing), journaling.",
+        description="Writing and editing substantial text: docs, notes, reports, thesis drafts, blog posts, and other long-form content.",
+    ),
+    CategoryDefinition(
+        name="learning",
+        icon="book-open-symbolic",
+        description="Intentional learning: courses, study sessions, tutorials, papers, educational videos, and reading to build understanding.",
     ),
     CategoryDefinition(
         name="communication",
         icon="mail-unread-symbolic",
-        description="Communication. Email (Gmail, Outlook), chat (Slack, Discord, Telegram), meeting (Zoom, Teams, video calls).",
+        description="Communication work: email, chat, and meetings.",
         subcategories=["email", "chat", "meeting"],
         subcategory_selectable=True,
     ),
     CategoryDefinition(
         name="admin",
         icon="system-file-manager-symbolic",
-        description="Personal admin. Finance (banking, bills, taxes), personal (forms, appointments, documents).",
-        subcategories=["finance", "personal"],
-        subcategory_selectable=True,
-    ),
-    CategoryDefinition(
-        name="media",
-        icon="multimedia-player-symbolic",
-        description="Entertainment. Video (YouTube, Netflix, streaming), audio (Spotify, podcasts, music).",
-        subcategories=["video", "audio"],
-        subcategory_selectable=True,
-    ),
-    CategoryDefinition(
-        name="gaming",
-        icon="gamepad-symbolic",
-        description="Playing games: Steam, browser games, emulators, console.",
+        description="Routine operations: task management, calendar, planning, finance, forms, and personal or work admin.",
     ),
     CategoryDefinition(
         name="browsing",
         icon="web-browser-symbolic",
-        description="Web browsing. Social media (Twitter, Facebook, Reddit, Instagram), shopping (Amazon, e-commerce), news (news sites, RSS), entertainment (humor, memes), reference (Wikipedia, dictionaries).",
+        description="General web browsing that is not active development or structured learning. Includes social media, shopping, news, casual entertainment, and generic reference lookups.",
         subcategories=[
             "social_media",
             "shopping",
@@ -68,14 +54,21 @@ CATEGORY_CATALOG: list[CategoryDefinition] = [
         subcategory_selectable=False,
     ),
     CategoryDefinition(
-        name="adult",
-        icon="dialog-warning-symbolic",
-        description="Adult content: porn sites, adult entertainment. Private.",
+        name="media",
+        icon="multimedia-player-symbolic",
+        description="Passive media consumption and entertainment through video or audio.",
+        subcategories=["video", "audio"],
+        subcategory_selectable=True,
     ),
     CategoryDefinition(
-        name="break",
-        icon="coffee-cup-symbolic",
-        description="Intentional pauses: coffee, snacks, stepping away.",
+        name="gaming",
+        icon="gamepad-symbolic",
+        description="Playing games: Steam, browser games, emulators, or console.",
+    ),
+    CategoryDefinition(
+        name="adult",
+        icon="dialog-warning-symbolic",
+        description="Explicit sexual content and NSFW material.",
     ),
 ]
 
@@ -112,36 +105,34 @@ def _subcategory_description(parent: str, child: str) -> str | None:
         (
             "communication",
             "email",
-        ): "Email communication: Gmail, Outlook, email clients.",
+        ): "Email communication: Gmail, Outlook, and other email clients.",
         (
             "communication",
             "chat",
-        ): "Chat messaging: Slack, Discord, Telegram, Teams chat.",
+        ): "Chat communication: Slack, Discord, Telegram, Teams chat, and similar messaging.",
         (
             "communication",
             "meeting",
-        ): "Video meetings: Zoom, Teams, Google Meet, presentations.",
-        ("admin", "finance"): "Financial admin: banking, bills, taxes, investments.",
-        ("admin", "personal"): "Personal admin: forms, appointments, documents.",
-        ("media", "video"): "Video content: YouTube, Netflix, streaming platforms.",
-        ("media", "audio"): "Audio content: Spotify, podcasts, music players.",
+        ): "Meetings and calls: Zoom, Teams, Google Meet, presentations, and live collaboration.",
         (
             "browsing",
             "social_media",
-        ): "Social media: Twitter, Facebook, Reddit, Instagram.",
+        ): "Social media browsing: Twitter, Facebook, Reddit, Instagram, and similar feeds.",
         (
             "browsing",
             "shopping",
-        ): "Shopping: Amazon, e-commerce sites, price comparison.",
-        ("browsing", "news"): "News browsing: news sites, RSS feeds, current events.",
+        ): "Shopping and product browsing: Amazon, e-commerce sites, and price comparison.",
+        ("browsing", "news"): "News browsing: news sites, RSS feeds, and current events.",
         (
             "browsing",
             "entertainment",
-        ): "Entertainment browsing: humor sites, memes, fun content.",
+        ): "Casual entertainment browsing: humor sites, memes, celebrity content, and fun links.",
         (
             "browsing",
             "reference",
-        ): "Reference lookup: Wikipedia, dictionaries, quick info.",
+        ): "Generic reference lookup: Wikipedia, dictionaries, quick factual checks, and non-project reading.",
+        ("media", "video"): "Video entertainment and passive watching: YouTube, Netflix, streaming platforms, and similar playback.",
+        ("media", "audio"): "Audio entertainment and passive listening: Spotify, podcasts, music players, and similar playback.",
     }
     return descriptions.get((parent, child))
 

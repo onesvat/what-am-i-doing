@@ -94,10 +94,17 @@ class ActivityDaemon:
         async with self._refresh_lock:
             context_outputs: dict[str, str] = {}
             for name, tool in self.config.tools.context.items():
-                result = await self.command_runner.run(tool, [])
-                context_outputs[name] = (
-                    result.stdout if result.stdout else result.stderr
-                )
+                try:
+                    result = await self.command_runner.run(tool, [])
+                except Exception as exc:
+                    context_outputs[name] = "<unavailable>"
+                    self.debug.log(
+                        "context_tool_unavailable",
+                        tool_name=name,
+                        error=str(exc),
+                    )
+                    continue
+                context_outputs[name] = self._context_output_for_prompt(result)
             self.debug.log("taxonomy_refresh_start", context_outputs=context_outputs)
             try:
                 taxonomy = await self.generator.generate(self.config, context_outputs)
@@ -316,6 +323,27 @@ class ActivityDaemon:
             "active_workspace_name": snapshot.state.active_workspace_name,
             "fullscreen": window.fullscreen if window else False,
             "maximized": window.maximized if window else False,
+            "open_windows": [
+                {
+                    "title": open_window.title,
+                    "wm_class": open_window.wm_class,
+                    "wm_class_instance": open_window.wm_class_instance,
+                    "app_id": open_window.app_id,
+                    "workspace": open_window.workspace,
+                    "workspace_name": open_window.workspace_name,
+                    "z_order": open_window.z_order,
+                }
+                for open_window in sorted(
+                    snapshot.state.open_windows,
+                    key=lambda item: (
+                        item.z_order is None,
+                        item.z_order if item.z_order is not None else 9999,
+                        item.wm_class,
+                        item.title,
+                    ),
+                )
+                if open_window.title or open_window.wm_class
+            ],
             "screen_locked": snapshot.state.screen_locked,
             "idle_time_seconds": snapshot.state.idle_time_seconds,
             "previous_selection": previous_selection,
@@ -323,6 +351,14 @@ class ActivityDaemon:
         }
         serialized = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+    def _context_output_for_prompt(self, result) -> str:
+        if result.returncode != 0:
+            return "<unavailable>"
+        stdout = result.stdout.strip()
+        if stdout:
+            return stdout
+        return "<empty>"
 
     async def _run_actions(self, path: str) -> None:
         calls = self.runtime.taxonomy.tools_for_path(path)

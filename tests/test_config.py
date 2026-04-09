@@ -85,7 +85,7 @@ class ConfigTest(unittest.TestCase):
                 "generator": {
                     "categories": [
                         {"name": "coding"},
-                        {"name": "research"},
+                        {"name": "learning"},
                     ],
                     "instructions": "gen",
                 },
@@ -111,7 +111,7 @@ class ConfigTest(unittest.TestCase):
         )
         normalized = config.normalize_generated_taxonomy(taxonomy)
         self.assertEqual(
-            ["coding", "research", "idle"],
+            ["coding", "learning", "idle"],
             [node.name for node in normalized.categories],
         )
         self.assertEqual("laptop-symbolic", normalized.categories[0].icon)
@@ -176,7 +176,7 @@ class ConfigTest(unittest.TestCase):
         config = AppConfig.model_validate(
             {
                 "version": 1,
-                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "model": {"base_url": "http://localhost:11434/v1", "name": "test"},
                 "generator": {"categories": [{"name": "coding"}], "instructions": ""},
                 "classifier": {"instructions": ""},
                 "tools": {"actions": {"sp_stop": {"run": ["stop"]}}},
@@ -194,8 +194,8 @@ class ConfigTest(unittest.TestCase):
         )
         normalized = config.normalize_generated_taxonomy(taxonomy)
         coding_node = normalized.categories[0]
-        other_child = next(c for c in coding_node.children if c.name == "other")
-        self.assertEqual(["sp_stop"], [c.tool for c in other_child.tool_calls])
+        self.assertEqual([], coding_node.children)
+        self.assertEqual(["sp_stop"], [c.tool for c in coding_node.tool_calls])
 
     def test_normalize_inherits_parent_tools_to_existing_other(self) -> None:
         config = AppConfig.model_validate(
@@ -429,9 +429,11 @@ class ConfigTest(unittest.TestCase):
                 "classifier": {"instructions": ""},
             }
         )
+        taxonomy = config.seed_taxonomy()
+        self.assertEqual(["communication"], [node.name for node in taxonomy.categories])
         self.assertEqual(
-            ["communication/email"],
-            [node.name for node in config.seed_taxonomy().categories],
+            ["email"],
+            [child.name for child in taxonomy.categories[0].children],
         )
 
     def test_reserved_category_in_path_rejected(self) -> None:
@@ -448,7 +450,7 @@ class ConfigTest(unittest.TestCase):
                 }
             )
 
-    def test_browsing_expands_to_subcategories_in_seed_taxonomy(self) -> None:
+    def test_browsing_does_not_expand_in_seed_taxonomy(self) -> None:
         config = AppConfig.model_validate(
             {
                 "version": 1,
@@ -460,16 +462,18 @@ class ConfigTest(unittest.TestCase):
                 "classifier": {"instructions": ""},
             }
         )
-        names = [node.name for node in config.seed_taxonomy().categories]
+        taxonomy = config.seed_taxonomy()
+        self.assertEqual(["browsing"], [node.name for node in taxonomy.categories])
         self.assertEqual(
             [
-                "browsing/social_media",
-                "browsing/shopping",
-                "browsing/news",
-                "browsing/entertainment",
-                "browsing/reference",
+                "social_media",
+                "shopping",
+                "news",
+                "entertainment",
+                "reference",
+                "other",
             ],
-            names,
+            [child.name for child in taxonomy.categories[0].children],
         )
 
     def test_selectable_category_stays_top_level(self) -> None:
@@ -484,8 +488,12 @@ class ConfigTest(unittest.TestCase):
                 "classifier": {"instructions": ""},
             }
         )
-        names = [node.name for node in config.seed_taxonomy().categories]
-        self.assertEqual(["communication"], names)
+        taxonomy = config.seed_taxonomy()
+        self.assertEqual(["communication"], [node.name for node in taxonomy.categories])
+        self.assertEqual(
+            ["email", "chat", "meeting", "other"],
+            [child.name for child in taxonomy.categories[0].children],
+        )
 
     def test_catalog_icon_used_for_category(self) -> None:
         config = AppConfig.model_validate(
@@ -515,7 +523,31 @@ class ConfigTest(unittest.TestCase):
             }
         )
         taxonomy = config.seed_taxonomy()
-        self.assertIn("Development", taxonomy.categories[0].description)
+        self.assertIn("Software development", taxonomy.categories[0].description)
+
+    def test_catalog_note_is_appended_for_known_category(self) -> None:
+        config = AppConfig.model_validate(
+            {
+                "version": 1,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "generator": {
+                    "categories": [
+                        {
+                            "name": "coding",
+                            "note": "Includes technical browser work for active projects.",
+                        }
+                    ],
+                    "instructions": "",
+                },
+                "classifier": {"instructions": ""},
+            }
+        )
+
+        taxonomy = config.seed_taxonomy()
+        self.assertIn(
+            "Includes technical browser work for active projects.",
+            taxonomy.categories[0].description,
+        )
 
     def test_normalize_child_with_full_path_strips_prefix(self) -> None:
         config = AppConfig.model_validate(
@@ -547,6 +579,89 @@ class ConfigTest(unittest.TestCase):
         coding_node = next(n for n in normalized.categories if n.name == "coding")
         self.assertEqual(["debugging", "other"], [c.name for c in coding_node.children])
 
+    def test_normalize_repairs_top_level_browsing_slash_nodes(self) -> None:
+        config = AppConfig.model_validate(
+            {
+                "version": 1,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "generator": {"categories": [{"name": "browsing"}], "instructions": ""},
+                "classifier": {"instructions": ""},
+            }
+        )
+        taxonomy = Taxonomy(
+            categories=[
+                TaxonomyNode(
+                    name="browsing/social_media",
+                    description="Social media",
+                    icon="web-browser-symbolic",
+                ),
+                TaxonomyNode(
+                    name="browsing/reference",
+                    description="Reference",
+                    icon="web-browser-symbolic",
+                ),
+            ]
+        )
+
+        normalized = config.normalize_generated_taxonomy(taxonomy)
+
+        self.assertEqual(["browsing", "idle"], [node.name for node in normalized.categories])
+        browsing = normalized.categories[0]
+        self.assertEqual(
+            ["social_media", "reference", "other"],
+            [child.name for child in browsing.children],
+        )
+        self.assertIn("browsing/social_media", normalized.allowed_paths())
+        self.assertIn("browsing/reference", normalized.allowed_paths())
+        self.assertIn("browsing/other", normalized.allowed_paths())
+
+    def test_normalize_child_only_seed_keeps_selected_child_without_other(self) -> None:
+        config = AppConfig.model_validate(
+            {
+                "version": 1,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "generator": {
+                    "categories": [{"name": "communication/email"}],
+                    "instructions": "",
+                },
+                "classifier": {"instructions": ""},
+            }
+        )
+
+        normalized = config.normalize_generated_taxonomy(Taxonomy(categories=[]))
+
+        self.assertEqual(
+            {"communication/email", "idle"},
+            normalized.allowed_paths(),
+        )
+        self.assertNotIn("communication/other", normalized.allowed_paths())
+
+    def test_normalized_browsing_path_resolves_without_key_error(self) -> None:
+        config = AppConfig.model_validate(
+            {
+                "version": 1,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "generator": {"categories": [{"name": "browsing"}], "instructions": ""},
+                "classifier": {"instructions": ""},
+            }
+        )
+        taxonomy = Taxonomy(
+            categories=[
+                TaxonomyNode(
+                    name="browsing/reference",
+                    description="Reference",
+                    icon="web-browser-symbolic",
+                )
+            ]
+        )
+
+        normalized = config.normalize_generated_taxonomy(taxonomy)
+        top, child = normalized.node_for_path("browsing/reference")
+
+        self.assertEqual("browsing", top.name)
+        self.assertIsNotNone(child)
+        self.assertEqual("reference", child.name)
+
     def test_normalize_generated_taxonomy_enforces_all_config_categories(self) -> None:
         """ALL categories from config must appear in normalized taxonomy."""
         config = AppConfig.model_validate(
@@ -556,8 +671,9 @@ class ConfigTest(unittest.TestCase):
                 "generator": {
                     "categories": [
                         {"name": "coding"},
+                        {"name": "communication"},
                         {"name": "custom_cat", "note": "My custom category"},
-                        {"name": "research"},
+                        {"name": "learning"},
                     ],
                     "instructions": "",
                 },
@@ -572,21 +688,26 @@ class ConfigTest(unittest.TestCase):
         normalized = config.normalize_generated_taxonomy(sparse_taxonomy)
 
         paths = normalized.allowed_paths()
-        self.assertIn("coding/other", paths)
-        self.assertIn("custom_cat/other", paths)
-        self.assertIn("research/other", paths)
+        self.assertIn("coding", paths)
+        self.assertIn("communication/other", paths)
+        self.assertIn("custom_cat", paths)
+        self.assertIn("learning", paths)
         self.assertIn("idle", paths)
 
         custom_node = next(n for n in normalized.categories if n.name == "custom_cat")
         self.assertEqual("My custom category", custom_node.description)
 
+
     def test_normalized_taxonomy_has_other_fallback_for_top_level(self) -> None:
-        """Top-level categories should have '{category}/other' fallback subcategory."""
+        """Top-level categories with predefined subcategories should have '{category}/other' fallback subcategory."""
         config = AppConfig.model_validate(
             {
                 "version": 1,
                 "model": {"base_url": "http://localhost:11434/v1", "name": "test"},
-                "generator": {"categories": [{"name": "coding"}], "instructions": ""},
+                "generator": {
+                    "categories": [{"name": "communication"}],
+                    "instructions": "",
+                },
                 "classifier": {"instructions": ""},
             }
         )
@@ -595,7 +716,7 @@ class ConfigTest(unittest.TestCase):
             {
                 "categories": [
                     {
-                        "name": "coding",
+                        "name": "communication",
                         "description": "...",
                         "icon": "...",
                         "children": [],
@@ -607,7 +728,7 @@ class ConfigTest(unittest.TestCase):
         normalized = config.normalize_generated_taxonomy(simple_taxonomy)
 
         paths = normalized.allowed_paths()
-        self.assertIn("coding/other", paths)
+        self.assertIn("communication/other", paths)
 
 
 if __name__ == "__main__":

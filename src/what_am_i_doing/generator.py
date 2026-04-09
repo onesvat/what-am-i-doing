@@ -39,7 +39,7 @@ class TaxonomyGenerator:
                 )
                 taxonomy = Taxonomy.model_validate_json(content)
                 taxonomy = config.normalize_generated_taxonomy(taxonomy)
-                taxonomy.validate_action_tool_refs(set(config.tools.actions))
+                taxonomy.filter_unknown_action_tools(set(config.tools.actions))
                 if self.debug is not None:
                     self.debug.log(
                         "generator_result",
@@ -60,22 +60,35 @@ class TaxonomyGenerator:
         rendered_instructions: str,
     ) -> str:
         category_lines: list[str] = []
-        for category in config.generator.categories:
+        for group in config.configured_category_groups():
             cat_def = next(
-                (c for c in CATEGORY_CATALOG if c.name == category.name), None
+                (c for c in CATEGORY_CATALOG if c.name == group.name), None
             )
             if cat_def:
                 line = f"- {cat_def.name} (icon: {cat_def.icon}): {cat_def.description}"
-                if cat_def.subcategories:
-                    line += f" Subcategories: {', '.join(cat_def.subcategories)}."
-                if category.note:
-                    line += f" User note: {category.note}"
+                child_names: list[str] = []
+                if group.explicit_top and cat_def.subcategories:
+                    child_names.extend(cat_def.subcategories)
+                child_names.extend(
+                    child_name
+                    for child_name in group.child_notes
+                    if child_name not in child_names
+                )
+                if child_names:
+                    line += f" Subcategories: {', '.join(child_names)}."
+                if group.note:
+                    line += f" User note: {group.note}"
                 category_lines.append(line)
             else:
-                note_text = category.note or "no description"
-                category_lines.append(
-                    f"- {category.name}: {note_text} (no catalog entry)"
-                )
+                note_text = group.note or "no description"
+                line = f"- {group.name}: {note_text} (no catalog entry)"
+                if group.child_notes:
+                    line += (
+                        " Subcategories: "
+                        + ", ".join(group.child_notes.keys())
+                        + "."
+                    )
+                category_lines.append(line)
 
         action_tool_lines = [
             f"- {name}: {' '.join(tool.run)}"

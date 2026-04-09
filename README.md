@@ -2,7 +2,7 @@
 
 `waid` helps your GNOME desktop understand what you are doing right now.
 
-It watches your active window, picks a category like `coding` or `planning`, and can run your own commands when that category changes.
+It watches your active window, picks a category like `coding` or `learning`, and can run your own commands when that category changes.
 
 ## Why Use It? 🙂
 
@@ -69,8 +69,8 @@ The setup wizard will ask for:
 - your LLM endpoint
 - your model name
 - broad categories you care about
-- context commands like `sp list today`
-- action commands like `sp switch` or `ha`
+- context commands like `sp task list --today --json`
+- action commands like `sp task start` or `ha`
 - short extra instructions
 
 Your config will be written to:
@@ -196,38 +196,26 @@ generator:
   retry_count: 1
   categories:
     - name: coding
-    - name: messaging
-      note: email, chat, meetings
-    - name: planning
-    - name: surfing
+    - name: writing
+    - name: learning
+    - name: communication
+    - name: admin
+    - name: browsing
+    - name: media
   instructions: |
-    Prefer matching today's planned tasks when possible.
-    Today's tasks:
-    ${sp_today_tasks}
+    Keep the taxonomy small and practical.
+    Create child categories only for active projects or repeated work you expect today.
 
 classifier:
   retry_count: 2
   instructions: |
+    Classify by current intention, not just the app name.
     Prefer the most specific category.
-    Use unclassified when no category fits.
-  params:
-    work_mode: focused
+    Switch immediately when the user's intention changes.
 
 tools:
-  context:
-    sp_today_tasks:
-      run: ["sp", "list", "today"]
-      timeout_seconds: 10
-  actions:
-    sp_switch:
-      run: ["sp", "switch"]
-      timeout_seconds: 10
-    ha:
-      run: ["ha"]
-      timeout_seconds: 10
-    telegram:
-      run: ["telegram-send"]
-      timeout_seconds: 10
+  context: {}
+  actions: {}
 ```
 
 ### `model`
@@ -272,7 +260,7 @@ Example:
 tools:
   context:
     sp_today_tasks:
-      run: ["sp", "list", "today"]
+      run: ["sp", "task", "list", "--today", "--json"]
 ```
 
 Then you can use the output inside `generator.instructions` like this:
@@ -290,25 +278,25 @@ Example:
 ```yaml
 tools:
   actions:
-    sp_switch:
-      run: ["sp", "switch"]
+    sp_start_task:
+      run: ["sp", "task", "start"]
 ```
 
 If the generated taxonomy returns:
 
 ```json
-{"tool":"sp_switch","args":["123"]}
+{"tool":"sp_start_task","args":["123"]}
 ```
 
 `waid` will run:
 
 ```bash
-sp switch 123
+sp task start 123
 ```
 
 ## Common Setups
 
-### ✅ Super Productivity
+### ✅ Super Productivity Example
 
 Use a context tool for today's tasks:
 
@@ -316,7 +304,7 @@ Use a context tool for today's tasks:
 tools:
   context:
     sp_today_tasks:
-      run: ["sp", "list", "today"]
+      run: ["sp", "task", "list", "--today", "--json"]
 ```
 
 Use an action tool for switching:
@@ -324,8 +312,8 @@ Use an action tool for switching:
 ```yaml
 tools:
   actions:
-    sp_switch:
-      run: ["sp", "switch"]
+    sp_start_task:
+      run: ["sp", "task", "start"]
 ```
 
 Then guide the generator with something like:
@@ -334,7 +322,7 @@ Then guide the generator with something like:
 Today's tasks:
 ${sp_today_tasks}
 
-Create useful child categories when they clearly match these tasks.
+Create useful child categories only when they clearly match these tasks.
 ```
 
 ### ✅ Home Assistant
@@ -372,7 +360,7 @@ You can attach Telegram notifications to any generated category you want.
 Examples:
 
 - notify when you enter a distraction-related browsing category
-- notify when a planning session starts
+- notify when an admin session starts
 - notify when a work session moves into a specific project
 
 ## Files `waid` Writes
@@ -389,7 +377,7 @@ Inside `~/.local/state/waid/`:
 
 These are worth knowing:
 
-- tool names should look like `sp_switch` or `ha`
+- tool names should look like `sp_start_task` or `ha`
 - commands must be argv arrays, not shell strings
 - category names cannot contain `/`
 - top-level categories should stay broad
