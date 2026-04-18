@@ -324,8 +324,19 @@ export default class WaidExtension extends Extension {
             x_expand: true,
             y_align: Clutter.ActorAlign.CENTER,
         });
+        const headerBox = new St.BoxLayout({vertical: true, x_expand: true});
+        headerBox.add_child(headerLabel);
+        const taskLabelText = this._currentTaskLabel();
+        if (taskLabelText) {
+            headerBox.add_child(new St.Label({
+                text: taskLabelText,
+                style_class: 'waid-header-task-label',
+                x_expand: true,
+                y_align: Clutter.ActorAlign.CENTER,
+            }));
+        }
         headerItem.add_child(headerIcon);
-        headerItem.add_child(headerLabel);
+        headerItem.add_child(headerBox);
         this._indicator.menu.addMenuItem(headerItem);
 
         // Today's stats from daemon payload
@@ -343,7 +354,7 @@ export default class WaidExtension extends Extension {
         } else {
             const emptyItem = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
             emptyItem.add_child(new St.Label({
-                text: 'No choices configured',
+                text: 'No activities or tasks configured',
                 y_align: Clutter.ActorAlign.CENTER,
             }));
             this._indicator.menu.addMenuItem(emptyItem);
@@ -369,7 +380,7 @@ export default class WaidExtension extends Extension {
         // Actions
         this._indicator.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
-        const refreshItem = new PopupMenu.PopupMenuItem('Reload Choices');
+        const refreshItem = new PopupMenu.PopupMenuItem('Reload Catalog');
         refreshItem.connect('activate', () => this._requestRefresh());
         this._indicator.menu.addMenuItem(refreshItem);
 
@@ -393,11 +404,17 @@ export default class WaidExtension extends Extension {
     _currentActivityLabel() {
         const s = this._currentStatus;
         if (!s) return PANEL_KIND_DISCONNECTED;
+        if (s.path) return s.path;
         if (s.display_label) return s.display_label;
         if (s.kind === PANEL_KIND_CLASSIFIED) return s.path || PANEL_KIND_CLASSIFIED;
         if (s.kind === PANEL_KIND_UNCLASSIFIED) return PANEL_KIND_UNCLASSIFIED;
         if (s.kind === PANEL_KIND_PAUSED) return PANEL_KIND_PAUSED;
         return PANEL_KIND_DISCONNECTED;
+    }
+
+    _currentTaskLabel() {
+        const s = this._currentStatus;
+        return s && s.task_path ? s.task_path : '';
     }
 
     _addDisplayRow(row) {
