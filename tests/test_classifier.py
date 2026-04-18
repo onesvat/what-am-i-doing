@@ -142,7 +142,7 @@ class ClassifierTest(unittest.TestCase):
         self.assertIn("- project-a: Specific task context", prompt)
         self.assertIn(f"- {UNKNOWN_PATH}", prompt)
         self.assertIn('"activity_path": "browsing/other"', prompt)
-        self.assertIn("If no specific task matches, leave `task_path` null", prompt)
+        self.assertIn("Set `task_path` to an allowed task only when", prompt)
         self.assertIn("For idle, choose `idle` and leave `task_path` null.", prompt)
 
 

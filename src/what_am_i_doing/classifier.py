@@ -134,9 +134,8 @@ class EventClassifier:
             "Allowed task_path values:\n"
             + ("\n".join(f"- {path}" for path in task_outputs) if task_outputs else "- null")
             + "\n- null",
-            "General activities:\n" + catalog.describe_activities(),
-            "SP tasks:\n"
-            + (catalog.describe_tasks() if task_outputs else "- No SP tasks available."),
+            "Activities:\n" + catalog.describe_activities(),
+            "Tasks:\n" + (catalog.describe_tasks() if task_outputs else "- No tasks available."),
             "Previous result:\n"
             + (
                 json.dumps(previous_result.model_dump(mode="json"), sort_keys=True)

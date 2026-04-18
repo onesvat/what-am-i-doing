@@ -558,13 +558,6 @@ class ActivityDaemon:
             if previous_result is not None
             else None
         )
-        if previous_result is not None and previous_result.task_path and result.task_path is None:
-            current_calls = self._calls_for_path(current_path)
-            if not current_calls and "sp_stop" in self.config.tools.actions:
-                await self.command_runner.run_calls(
-                    self.config.tools.actions,
-                    [self._stop_call()],
-                )
         if current_path == previous_path or current_path == "idle":
             return
         await self._run_actions(current_path)
@@ -584,9 +577,6 @@ class ActivityDaemon:
         if path not in self.runtime.catalog.allowed_paths():
             return []
         return self.runtime.catalog.actions_for_path(path)
-
-    def _stop_call(self) -> ToolCall:
-        return ToolCall(tool="sp_stop", args=[])
 
     async def _close_previous_span(self, ended_at: datetime) -> None:
         if self.runtime.panel_state.kind != PANEL_KIND_CLASSIFIED:
