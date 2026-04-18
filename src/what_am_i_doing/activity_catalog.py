@@ -18,7 +18,7 @@ BUILTIN_ACTIVITY_DEFINITIONS: list[dict[str, str]] = [
     },
     {
         "path": "browsing/research",
-        "description": "Reference lookup, docs reading, articles, issue threads, and technical investigation not tied to a specific task.",
+        "description": "Reference lookup, docs reading, articles, issue threads, and general research that is not clearly a task match.",
     },
     {
         "path": "browsing/news",
@@ -37,51 +37,55 @@ BUILTIN_ACTIVITY_DEFINITIONS: list[dict[str, str]] = [
         "description": "Shell-heavy work, git commands, builds, package management, servers, logs, and command-line development.",
     },
     {
-        "path": "coding/review",
-        "description": "Pull request review, diff inspection, and code reading focused on evaluating changes.",
-    },
-    {
-        "path": "coding/debugging",
-        "description": "Tracing bugs, reproducing failures, examining logs, and interactive troubleshooting.",
-    },
-    {
         "path": "communication/chat",
-        "description": "Interactive chat conversations such as Slack, Telegram, Discord, or direct messaging for active discussion.",
+        "description": "Active chat conversations, direct messages, team messaging, and text-based back-and-forth communication.",
     },
     {
         "path": "communication/email",
-        "description": "Email reading, writing, triage, and inbox processing.",
+        "description": "Reading, writing, triaging, and processing email.",
     },
     {
         "path": "communication/meetings",
-        "description": "Live meetings, calls, screen shares, and calendar-driven synchronous communication.",
+        "description": "Live meetings, calls, video conferences, screen shares, and synchronous discussion.",
     },
     {
-        "path": "admin/planning",
-        "description": "Planning, prioritization, todos, scheduling, and operational coordination.",
+        "path": "communication/other",
+        "description": "Communication work that does not fit chat, email, or meetings.",
     },
     {
-        "path": "admin/finance",
-        "description": "Bills, banking, expense tracking, accounting, and financial admin.",
+        "path": "admin",
+        "description": "Planning, scheduling, todos, finance, operational chores, and general administrative work.",
     },
     {
-        "path": "writing/notes",
-        "description": "Writing notes, drafting text, outlining, and maintaining documents outside a specific task.",
+        "path": "writing",
+        "description": "Writing, drafting, note-taking, outlining, and maintaining text outside a specific task match.",
     },
     {
-        "path": "learning/course",
-        "description": "Structured learning, lessons, tutorials, studying, and practice.",
+        "path": "learning",
+        "description": "Studying, tutorials, lessons, guided learning, and practice where the main goal is learning.",
     },
     {
         "path": "media/video",
-        "description": "Passive video consumption such as YouTube, streams, or recorded talks.",
+        "description": "Passive video consumption such as YouTube, streams, recorded talks, or shows.",
     },
     {
-        "path": "media/music",
-        "description": "Passive audio listening, music, podcasts, or ambient media.",
+        "path": "media/audio",
+        "description": "Passive audio consumption such as music, podcasts, radio, or ambient listening.",
     },
     {
-        "path": "adult/explicit",
+        "path": "media/other",
+        "description": "Passive media consumption that does not fit video or audio clearly.",
+    },
+    {
+        "path": "system",
+        "description": "Local file management, settings, installers, updates, and general machine or desktop maintenance.",
+    },
+    {
+        "path": "gaming",
+        "description": "Games, emulators, launchers, and active gameplay.",
+    },
+    {
+        "path": "adult",
         "description": "Pornography, cam sites, hentai, explicit galleries, and clearly sexual adult content.",
     },
 ]

@@ -109,17 +109,31 @@ classifier:
   retry_count: 2
   instructions: |
     Prefer tasks when they clearly match.
-    Use adult/explicit for explicit sexual content.
+    Use adult for explicit sexual content.
     Use unknown only when no activity fits.
 
 allow_activities:
   - browsing/social_media
   - browsing/shopping
   - browsing/llm
+  - browsing/research
+  - browsing/news
   - browsing/other
   - coding/ide
   - coding/terminal
-  - adult/explicit
+  - communication/chat
+  - communication/email
+  - communication/meetings
+  - communication/other
+  - admin
+  - writing
+  - learning
+  - media/video
+  - media/audio
+  - media/other
+  - system
+  - gaming
+  - adult
 
 activities:
   - path: custom/research

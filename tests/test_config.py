@@ -18,6 +18,7 @@ from what_am_i_doing.config import (
     load_config,
     load_tasks,
 )
+from what_am_i_doing.activity_catalog import builtin_activity_entries
 from what_am_i_doing.models import CatalogEntry
 
 
@@ -135,6 +136,34 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(2, config.version)
         self.assertEqual([], config.activities)
         self.assertEqual({}, config.tools.actions)
+
+    def test_builtin_activity_catalog_matches_expected_paths(self) -> None:
+        self.assertEqual(
+            [
+                "browsing/social_media",
+                "browsing/shopping",
+                "browsing/llm",
+                "browsing/research",
+                "browsing/news",
+                "browsing/other",
+                "coding/ide",
+                "coding/terminal",
+                "communication/chat",
+                "communication/email",
+                "communication/meetings",
+                "communication/other",
+                "admin",
+                "writing",
+                "learning",
+                "media/video",
+                "media/audio",
+                "media/other",
+                "system",
+                "gaming",
+                "adult",
+            ],
+            [entry.path for entry in builtin_activity_entries()],
+        )
 
 
 if __name__ == "__main__":
