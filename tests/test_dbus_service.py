@@ -29,6 +29,10 @@ async def _noop_set_tracking(enabled: bool) -> None:
     pass
 
 
+async def _noop_pin_task(task_path: str) -> None:
+    pass
+
+
 class DBusServiceTest(unittest.IsolatedAsyncioTestCase):
     def test_refresh_taxonomy_alias_is_removed(self) -> None:
         self.assertFalse(hasattr(DaemonInterface, "RefreshTaxonomy"))
@@ -48,6 +52,7 @@ class DBusServiceTest(unittest.IsolatedAsyncioTestCase):
         interface = DaemonInterface(
             _noop_reload,
             _noop_set_tracking,
+            _noop_pin_task,
             initial,
             initial_ui,
             True,
@@ -103,6 +108,7 @@ class DBusServiceTest(unittest.IsolatedAsyncioTestCase):
         interface = DaemonInterface(
             _noop_reload,
             _noop_set_tracking,
+            _noop_pin_task,
             panel_state,
             ui_state,
             True,
@@ -130,6 +136,7 @@ class DBusServiceTest(unittest.IsolatedAsyncioTestCase):
         interface = DaemonInterface(
             _noop_reload,
             _noop_set_tracking,
+            _noop_pin_task,
             panel_state,
             ui_state,
             True,

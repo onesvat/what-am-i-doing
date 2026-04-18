@@ -128,3 +128,17 @@ def load_tracking(path: Path) -> bool:
 
 def save_tracking(path: Path, enabled: bool) -> None:
     path.write_text(json.dumps({"enabled": enabled}, indent=2), encoding="utf-8")
+
+
+def load_task_pins(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    with path.open("r", encoding="utf-8") as handle:
+        raw = json.loads(handle.read())
+    if not isinstance(raw, dict):
+        return {}
+    return {str(k): str(v) for k, v in raw.items() if isinstance(v, str)}
+
+
+def save_task_pins(path: Path, pins: dict[str, str]) -> None:
+    path.write_text(json.dumps(pins, indent=2, sort_keys=True), encoding="utf-8")

@@ -301,6 +301,7 @@ class DisplayRow(BaseModel):
     seconds: float = 0.0
     is_selected: bool = False
     is_legacy: bool = False
+    is_task: bool = False
 
 
 class UIStateRecord(BaseModel):
@@ -392,6 +393,7 @@ class AppPaths:
     status_json: Path
     spans_log: Path
     tracking_json: Path
+    task_pins_json: Path
 
     @classmethod
     def default(cls) -> "AppPaths":
@@ -407,6 +409,7 @@ class AppPaths:
             status_json=state_dir / "status.json",
             spans_log=state_dir / "spans.jsonl",
             tracking_json=state_dir / "tracking.json",
+            task_pins_json=state_dir / "task-pins.json",
         )
 
 

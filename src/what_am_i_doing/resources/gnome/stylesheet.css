@@ -45,3 +45,10 @@
 .waid-selected-label {
     font-weight: bold;
 }
+
+.waid-task-dot {
+    min-width: 12px;
+    padding: 0 4px 0 2px;
+    text-align: center;
+    color: alpha(white, 0.7);
+}

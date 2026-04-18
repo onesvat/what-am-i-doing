@@ -47,11 +47,17 @@ from .storage import (
     ensure_state_dir,
     load_spans,
     load_status,
+    load_task_pins,
     load_tracking,
     save_span,
+    save_task_pins,
     save_tracking,
     save_ui_state,
 )
+
+
+def _pin_key(wm_class: str, title: str) -> str:
+    return f"{wm_class}\x1f{title}"
 
 
 @dataclass(slots=True)
@@ -62,6 +68,7 @@ class RuntimeState:
     last_classified_started_at: datetime | None
     last_snapshot: ProviderSnapshot | None
     tracking_enabled: bool
+    task_pins: dict[str, str]
 
 
 class ActivityDaemon:
@@ -85,6 +92,7 @@ class ActivityDaemon:
         self.dbus_service = DaemonDBusService(
             self.reload_config,
             self.set_tracking,
+            self.pin_focused_window_to_task,
             self.runtime.panel_state,
             self._build_ui_state(),
             self.runtime.tracking_enabled,
@@ -114,6 +122,7 @@ class ActivityDaemon:
             last_classified_started_at=last_classified_started_at,
             last_snapshot=None,
             tracking_enabled=load_tracking(self.paths.tracking_json),
+            task_pins=load_task_pins(self.paths.task_pins_json),
         )
 
     async def reload_config(self) -> RefreshResult:
@@ -216,6 +225,8 @@ class ActivityDaemon:
                 cache_key=cache_key,
                 selected=result.model_dump(mode="json"),
             )
+
+        result = self._apply_task_pin(result, state)
 
         if self._same_result(previous_result, result):
             self.debug.log("activity_unchanged", selected=result.model_dump(mode="json"))
@@ -423,6 +434,7 @@ class ActivityDaemon:
         current_task = self.runtime.panel_state.task_path
         rows: list[DisplayRow] = []
 
+        task_paths = {entry.path for entry in self.runtime.catalog.task_entries}
         for entry in self.runtime.catalog.activity_entries + self.runtime.catalog.task_entries:
             seconds = durations.pop(entry.path, 0.0)
             rows.append(
@@ -433,6 +445,7 @@ class ActivityDaemon:
                     seconds=seconds,
                     is_selected=entry.path in {current_activity, current_task},
                     is_legacy=False,
+                    is_task=entry.path in task_paths,
                 )
             )
 
@@ -599,6 +612,41 @@ class ActivityDaemon:
             ),
         )
         save_span(self.paths.spans_log, span)
+
+    def _apply_task_pin(
+        self, result: ClassificationResult, state: Any
+    ) -> ClassificationResult:
+        if result.activity_path in {UNKNOWN_PATH, "idle"}:
+            return result
+        window = state.focused_window if state else None
+        if window is None:
+            return result
+        pinned = self.runtime.task_pins.get(_pin_key(window.wm_class or "", window.title or ""))
+        if pinned is None:
+            return result
+        if pinned not in self.runtime.catalog.task_paths():
+            return result
+        if result.task_path == pinned:
+            return result
+        return result.model_copy(update={"task_path": pinned})
+
+    async def pin_focused_window_to_task(self, task_path: str) -> None:
+        snapshot = self.runtime.last_snapshot
+        if snapshot is None or snapshot.state.focused_window is None:
+            return
+        window = snapshot.state.focused_window
+        key = _pin_key(window.wm_class or "", window.title or "")
+        if task_path:
+            if task_path not in self.runtime.catalog.task_paths():
+                return
+            self.runtime.task_pins[key] = task_path
+        else:
+            self.runtime.task_pins.pop(key, None)
+        save_task_pins(self.paths.task_pins_json, self.runtime.task_pins)
+        self.decision_cache.clear()
+        self.debug.log("task_pin_updated", key=key, task_path=task_path or None)
+        await self.handle_snapshot(snapshot)
+        self._publish_ui_state()
 
     def _current_result(self) -> ClassificationResult | None:
         current = self.runtime.panel_state

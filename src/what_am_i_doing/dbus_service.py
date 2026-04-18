@@ -22,6 +22,7 @@ class DaemonInterface(ServiceInterface):
         self,
         reload_callback: Callable[[], Awaitable[RefreshResult]],
         set_tracking_callback: Callable[[bool], Awaitable[None]],
+        pin_task_callback: Callable[[str], Awaitable[None]],
         initial_panel_state: PanelStateRecord,
         initial_ui_state: UIStateRecord,
         initial_tracking_enabled: bool,
@@ -29,6 +30,7 @@ class DaemonInterface(ServiceInterface):
         super().__init__(DAEMON_INTERFACE)
         self._reload_callback = reload_callback
         self._set_tracking_callback = set_tracking_callback
+        self._pin_task_callback = pin_task_callback
         self._panel_state = initial_panel_state
         self._panel_state_json = initial_panel_state.payload_json()
         self._legacy_status_json = self._build_legacy_status_json(initial_panel_state)
@@ -96,6 +98,10 @@ class DaemonInterface(ServiceInterface):
     @method()
     async def SetTracking(self, enabled: "b") -> "":
         await self._set_tracking_callback(enabled)
+
+    @method()
+    async def PinFocusedWindowToTask(self, task_path: "s") -> "":
+        await self._pin_task_callback(task_path)
 
     @signal()
     def PanelStateChanged(self, revision: "u", payload: "s") -> "us":
@@ -172,16 +178,19 @@ class DaemonDBusService:
         self,
         reload_callback: Callable[[], Awaitable[RefreshResult]],
         set_tracking_callback: Callable[[bool], Awaitable[None]],
+        pin_task_callback: Callable[[str], Awaitable[None]],
         initial_panel_state: PanelStateRecord,
         initial_ui_state: UIStateRecord,
         initial_tracking_enabled: bool,
     ) -> None:
         self._reload_callback = reload_callback
         self._set_tracking_callback = set_tracking_callback
+        self._pin_task_callback = pin_task_callback
         self._bus: MessageBus | None = None
         self.interface = DaemonInterface(
             reload_callback,
             set_tracking_callback,
+            pin_task_callback,
             initial_panel_state,
             initial_ui_state,
             initial_tracking_enabled,

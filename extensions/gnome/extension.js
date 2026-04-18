@@ -319,7 +319,7 @@ export default class WaidExtension extends Extension {
             style_class: 'waid-header-icon',
         });
         const headerLabel = new St.Label({
-            text: this._currentActivityLabel(),
+            text: `Activity: ${this._currentActivityLabel()}`,
             style_class: 'waid-header-label',
             x_expand: true,
             y_align: Clutter.ActorAlign.CENTER,
@@ -327,14 +327,12 @@ export default class WaidExtension extends Extension {
         const headerBox = new St.BoxLayout({vertical: true, x_expand: true});
         headerBox.add_child(headerLabel);
         const taskLabelText = this._currentTaskLabel();
-        if (taskLabelText) {
-            headerBox.add_child(new St.Label({
-                text: taskLabelText,
-                style_class: 'waid-header-task-label',
-                x_expand: true,
-                y_align: Clutter.ActorAlign.CENTER,
-            }));
-        }
+        headerBox.add_child(new St.Label({
+            text: taskLabelText ? `Task: ${taskLabelText}` : 'Task: (none)',
+            style_class: 'waid-header-task-label',
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        }));
         headerItem.add_child(headerIcon);
         headerItem.add_child(headerBox);
         this._indicator.menu.addMenuItem(headerItem);
@@ -346,18 +344,28 @@ export default class WaidExtension extends Extension {
             : [];
         let total = 0;
 
-        if (rows.length > 0) {
-            for (const row of rows) {
-                total += row.seconds || 0;
-                this._addDisplayRow(row);
-            }
-        } else {
+        const activityRows = rows.filter(r => !r.is_task && (r.seconds || 0) >= 60);
+        const taskRows = rows.filter(r => r.is_task);
+        for (const row of rows) {
+            total += row.seconds || 0;
+        }
+        if (activityRows.length === 0 && taskRows.length === 0) {
             const emptyItem = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
             emptyItem.add_child(new St.Label({
-                text: 'No activities or tasks configured',
+                text: rows.length > 0 ? 'No activity over 1m today' : 'No activities or tasks configured',
                 y_align: Clutter.ActorAlign.CENTER,
             }));
             this._indicator.menu.addMenuItem(emptyItem);
+        } else {
+            for (const row of activityRows) {
+                this._addDisplayRow(row);
+            }
+            if (taskRows.length > 0) {
+                this._indicator.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('Tasks'));
+                for (const row of taskRows) {
+                    this._addDisplayRow(row);
+                }
+            }
         }
         
         // Total row
@@ -395,10 +403,19 @@ export default class WaidExtension extends Extension {
         });
         this._indicator.menu.addMenuItem(configItem);
 
+        const clearPinItem = new PopupMenu.PopupMenuItem('Clear Task Pin (focused window)');
+        clearPinItem.connect('activate', () => this._pinFocusedWindowToTask(''));
+        this._indicator.menu.addMenuItem(clearPinItem);
+
         const isPaused = this._currentStatus && this._currentStatus.kind === PANEL_KIND_PAUSED;
         const trackingItem = new PopupMenu.PopupMenuItem(isPaused ? 'Resume Tracking' : 'Pause Tracking');
         trackingItem.connect('activate', () => this._setTracking(!isPaused));
         this._indicator.menu.addMenuItem(trackingItem);
+    }
+
+    _pinFocusedWindowToTask(taskPath) {
+        const params = GLib.Variant.new_tuple([GLib.Variant.new_string(taskPath || '')]);
+        this._callDaemon('PinFocusedWindowToTask', params);
     }
 
     _currentActivityLabel() {
@@ -420,7 +437,11 @@ export default class WaidExtension extends Extension {
     _addDisplayRow(row) {
         const item = new PopupMenu.PopupMenuItem('');
         item.add_style_class_name('waid-stat-row');
-        item.sensitive = false;
+        if (row.is_task) {
+            item.connect('activate', () => this._pinFocusedWindowToTask(row.path));
+        } else {
+            item.sensitive = false;
+        }
 
         if (row.is_selected) {
             item.add_style_class_name('waid-selected-row');
@@ -430,7 +451,14 @@ export default class WaidExtension extends Extension {
             item.add_style_class_name('waid-legacy-row');
         }
 
-        if (row.icon_name) {
+        if (row.is_task) {
+            item.add_style_class_name('waid-task-row');
+            item.add_child(new St.Label({
+                text: '•',
+                style_class: 'waid-task-dot',
+                y_align: Clutter.ActorAlign.CENTER,
+            }));
+        } else if (row.icon_name) {
             const catIcon = new St.Icon({
                 icon_name: row.icon_name,
                 style_class: 'waid-stat-icon popup-menu-icon',
