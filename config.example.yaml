@@ -9,11 +9,7 @@ model:
 
 classifier:
   retry_count: 2
-  instructions: |
-    Always choose one activity_path.
-    Use task_path only when the current work clearly matches a task in tasks.yaml.
-    Use adult for porn or explicit sexual content.
-    Use unknown only when no configured activity fits.
+  instructions: ""
 
 allow_activities:
   - browsing/social_media

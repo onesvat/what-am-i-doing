@@ -107,10 +107,7 @@ model:
 
 classifier:
   retry_count: 2
-  instructions: |
-    Prefer tasks when they clearly match.
-    Use adult for explicit sexual content.
-    Use unknown only when no activity fits.
+  instructions: ""
 
 allow_activities:
   - browsing/social_media
@@ -180,6 +177,8 @@ The script:
 - writes `~/.config/waid/tasks.yaml`
 - keeps Turkish-safe slugs
 - generates short task descriptions through the configured LLM
+
+The default classifier prompt already covers the general activity/task logic. Use `classifier.instructions` only for user-specific overrides.
 
 ## GNOME Panel Behavior
 
