@@ -5,14 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .constants import PANEL_KIND_CLASSIFIED, PANEL_KIND_UNCLASSIFIED
-from .models import (
-    AppPaths,
-    PanelStateRecord,
-    SpanRecord,
-    Taxonomy,
-    utcnow,
-)
+from .constants import PANEL_KIND_CLASSIFIED, UNKNOWN_CHOICE_PATH
+from .models import AppPaths, PanelStateRecord, SpanRecord, UIStateRecord, utcnow
 
 
 def ensure_state_dir(paths: AppPaths) -> None:
@@ -25,15 +19,29 @@ def append_jsonl(path: Path, payload: dict[str, Any]) -> None:
         handle.write("\n")
 
 
-def load_taxonomy(path: Path) -> Taxonomy | None:
+def load_ui_state(path: Path) -> UIStateRecord | None:
     if not path.exists():
         return None
     with path.open("r", encoding="utf-8") as handle:
-        return Taxonomy.model_validate_json(handle.read())
+        raw = json.loads(handle.read())
+    if not isinstance(raw, dict):
+        return None
+    if "display_rows" in raw or "display_label" in raw or "tracking_enabled" in raw:
+        return UIStateRecord.model_validate(raw)
+
+    panel_state = _panel_state_from_raw(raw)
+    if panel_state is None:
+        return None
+    return UIStateRecord.from_panel_state(
+        panel_state,
+        tracking_enabled=True,
+        display_label=panel_state.path or panel_state.kind,
+        display_rows=[],
+    )
 
 
-def save_taxonomy(path: Path, taxonomy: Taxonomy) -> None:
-    path.write_text(taxonomy.model_dump_json(indent=2), encoding="utf-8")
+def save_ui_state(path: Path, ui_state: UIStateRecord) -> None:
+    path.write_text(ui_state.payload_json(), encoding="utf-8")
 
 
 def load_status(path: Path) -> PanelStateRecord | None:
@@ -41,34 +49,39 @@ def load_status(path: Path) -> PanelStateRecord | None:
         return None
     with path.open("r", encoding="utf-8") as handle:
         raw = json.loads(handle.read())
+    if not isinstance(raw, dict):
+        return None
+    if "display_rows" in raw or "display_label" in raw or "tracking_enabled" in raw:
+        return UIStateRecord.model_validate(raw).to_panel_state()
+    return _panel_state_from_raw(raw)
+
+
+def _panel_state_from_raw(raw: dict[str, Any]) -> PanelStateRecord | None:
     if "kind" in raw:
         return PanelStateRecord.model_validate(raw)
+
     updated_at = raw.get("updated_at")
     published_at = (
         parse_timestamp(updated_at) if isinstance(updated_at, str) else utcnow()
     )
     current_path = raw.get("current_path")
-    taxonomy_hash = raw.get("taxonomy_hash")
-    if current_path and current_path != "unknown":
+    choices_hash = raw.get("choices_hash")
+    if current_path and current_path != UNKNOWN_CHOICE_PATH:
         top_level = raw.get("top_level") or str(current_path).split("/", 1)[0]
         return PanelStateRecord.classified(
             revision=int(raw.get("revision", 0)),
-            path=current_path,
-            top_level_id=top_level,
-            top_level_label=top_level,
+            path=str(current_path),
+            top_level_id=str(top_level),
+            top_level_label=str(top_level),
             icon_name=raw.get("icon") or "applications-system-symbolic",
             published_at=published_at,
-            taxonomy_hash=taxonomy_hash or "legacy",
+            choices_hash=choices_hash or "legacy",
         )
     return PanelStateRecord.unclassified(
         revision=int(raw.get("revision", 0)),
         published_at=published_at,
-        taxonomy_hash=taxonomy_hash,
+        choices_hash=choices_hash,
     )
-
-
-def save_status(path: Path, status: PanelStateRecord) -> None:
-    path.write_text(status.model_dump_json(indent=2), encoding="utf-8")
 
 
 def save_span(path: Path, span: SpanRecord) -> None:

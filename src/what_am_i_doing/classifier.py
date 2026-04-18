@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from .config import AppConfig
-from .constants import PANEL_KIND_UNCLASSIFIED, RESERVED_CATEGORY_NAMES
+from .constants import UNKNOWN_CHOICE_PATH
 from .debug import DebugLogger
 from .defaults import CLASSIFIER_BASE_PROMPT
 from .llm import LLMError, OpenAICompatibleClient
-from .models import ProviderState, Taxonomy, TaxonomyNode, WindowInfo
+from .models import ChoiceRegistry, ProviderState, WindowInfo
 
 
 class EventClassifier:
@@ -19,19 +19,20 @@ class EventClassifier:
         self,
         config: AppConfig,
         state: ProviderState,
-        taxonomy: Taxonomy,
+        choices: ChoiceRegistry,
         previous_path: str | None,
     ) -> str:
         if config.classify_idle and state.idle_time_seconds is not None:
             if state.idle_time_seconds >= config.idle_threshold_seconds:
-                if "idle" in taxonomy.allowed_paths():
-                    return "idle"
-        allowed_paths = sorted(taxonomy.allowed_paths())
-        valid_outputs = [p for p in allowed_paths if p != "idle"] + [
-            PANEL_KIND_UNCLASSIFIED
-        ]
+                return "idle"
+
+        allowed_paths = sorted(choices.allowed_paths())
+        valid_outputs = allowed_paths + [UNKNOWN_CHOICE_PATH]
+        if not allowed_paths:
+            return UNKNOWN_CHOICE_PATH
+
         base_prompt = self._build_prompt(
-            config, state, taxonomy, previous_path, valid_outputs
+            config, state, choices, previous_path, valid_outputs
         )
         last_invalid: str | None = None
         for attempt in range(config.classifier.retry_count + 1):
@@ -69,44 +70,23 @@ class EventClassifier:
             self.debug.log(
                 "classifier_fallback",
                 previous_path=previous_path,
-                fallback=PANEL_KIND_UNCLASSIFIED,
+                fallback=UNKNOWN_CHOICE_PATH,
                 last_invalid=last_invalid,
             )
-        return PANEL_KIND_UNCLASSIFIED
+        return UNKNOWN_CHOICE_PATH
 
     def _build_prompt(
         self,
         config: AppConfig,
         state: ProviderState,
-        taxonomy: Taxonomy,
+        choices: ChoiceRegistry,
         previous_path: str | None,
         valid_outputs: list[str],
     ) -> str:
-        filtered_categories = [
-            TaxonomyNode(
-                name=node.name,
-                description=node.description,
-                icon=node.icon,
-                tool_calls=node.tool_calls,
-                children=[
-                    TaxonomyNode(
-                        name=child.name,
-                        description=child.description,
-                        icon=child.icon,
-                        tool_calls=child.tool_calls,
-                        children=child.children,
-                    )
-                    for child in node.children
-                ],
-            )
-            for node in taxonomy.categories
-            if node.name not in RESERVED_CATEGORY_NAMES
-        ]
-        filtered_taxonomy = Taxonomy(categories=filtered_categories)
         sections = [
             CLASSIFIER_BASE_PROMPT.strip(),
             "Allowed outputs:\n" + "\n".join(f"- {path}" for path in valid_outputs),
-            "Taxonomy details:\n" + filtered_taxonomy.describe(),
+            "Available choices:\n" + choices.describe(),
             f"Previous path: {previous_path or 'none'}",
             "Current event:\n" + self._state_summary(state),
         ]

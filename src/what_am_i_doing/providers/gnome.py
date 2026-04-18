@@ -25,7 +25,7 @@ class GnomeProvider(Provider):
             tracker = await self._tracker_interface(bus)
             return await self._snapshot_from_interface(tracker, default_revision=1)
         finally:
-            bus.disconnect()
+            await self._disconnect_bus(bus)
 
     async def monitor(self, callback: ProviderCallback) -> None:
         bus = await MessageBus(bus_type=BusType.SESSION).connect()
@@ -100,7 +100,16 @@ class GnomeProvider(Provider):
         finally:
             tracker.off_state_changed(on_state_changed)
             dbus.off_name_owner_changed(on_name_owner_changed)
-            bus.disconnect()
+            await self._disconnect_bus(bus)
+
+    async def _disconnect_bus(self, bus: MessageBus | None) -> None:
+        if bus is None:
+            return
+        bus.disconnect()
+        try:
+            await bus.wait_for_disconnect()
+        except Exception:
+            pass
 
     async def _tracker_interface(self, bus: MessageBus):
         introspection = await bus.introspect(TRACKER_BUS_NAME, TRACKER_OBJECT_PATH)

@@ -15,3 +15,4 @@ dist/
 
 # Helper scripts not part of waid
 sp-task-monitor.py
+.codex

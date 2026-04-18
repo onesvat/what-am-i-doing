@@ -32,14 +32,24 @@ class ExtensionAssetsTest(unittest.TestCase):
         self.assertEqual(["49"], metadata["shell-version"])
         self.assertTrue(metadata["url"].startswith("https://"))
 
-    def test_extension_stats_hide_sub_minute_rows(self) -> None:
+    def test_extension_renders_rows_from_status_payload(self) -> None:
         extension_path = ROOT / "extensions" / "gnome" / "extension.js"
         source = extension_path.read_text(encoding="utf-8")
 
-        self.assertIn("_shouldShowStatRow(seconds)", source)
-        self.assertIn("return seconds >= 60;", source)
-        self.assertIn("if (this._shouldShowStatRow(catSeconds))", source)
-        self.assertIn("if (this._shouldShowStatRow(childSeconds))", source)
+        self.assertIn("display_rows", source)
+        self.assertIn("this._addDisplayRow(row)", source)
+        self.assertIn("Reload Choices", source)
+        self.assertIn("ReloadConfig", source)
+
+    def test_extension_no_longer_reads_taxonomy_or_spans_files(self) -> None:
+        extension_path = ROOT / "extensions" / "gnome" / "extension.js"
+        source = extension_path.read_text(encoding="utf-8")
+
+        self.assertNotIn("TAXONOMY_FILE", source)
+        self.assertNotIn("SPANS_FILE", source)
+        self.assertNotIn("RefreshTaxonomy", source)
+        self.assertNotIn("_aggregateSpans", source)
+        self.assertNotIn("_loadTaxonomy", source)
 
 
 if __name__ == "__main__":

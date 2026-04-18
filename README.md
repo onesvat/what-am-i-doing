@@ -1,32 +1,23 @@
 # waid
 
-`waid` helps your GNOME desktop understand what you are doing right now.
+`waid` is a GNOME-first desktop activity tracker.
 
-It watches your active window, picks a category like `coding` or `learning`, and can run your own commands when that category changes.
-
-## Why Use It? 🙂
-
-With `waid`, you can:
-
-- switch your current Super Productivity task automatically
-- update Home Assistant with your current work mode
-- show your current status in the GNOME top bar
-- keep lightweight logs of what you worked on during the day
-- build your own automations without hardcoding rules in Python
+It watches the focused window, asks a classifier to pick one configured path such as `work/project-a` or `browsing/reference`, shows the current result in the GNOME panel, and can run your own action commands when the selection changes.
 
 ## How It Works
 
-`waid` has three simple pieces:
+`waid` now has a simple runtime model:
 
-1. 🖥️ A GNOME extension tells `waid` which window is focused.
-2. 🧠 A generator model builds a small category tree from your config and context commands.
-3. ⚡ A classifier model picks the best category for each window change.
+1. The GNOME extension reports the current desktop state.
+2. The daemon loads `config.yaml` plus any imported choice files.
+3. The classifier chooses one allowed path or `unknown`.
+4. When the chosen path changes, `waid` records the span and runs any configured actions.
 
-When the category changes, `waid` runs the action commands attached to that category.
+There is no generator loop and no runtime taxonomy file anymore. Your config is the source of truth.
 
 ## Quick Start
 
-### 1. Install it
+### 1. Install
 
 Using `uv`:
 
@@ -44,13 +35,7 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 ```
 
-If you do not want to activate the environment, use the binary directly:
-
-```bash
-.venv/bin/waid init
-```
-
-### 2. Create your config
+### 2. Create a Config
 
 Run:
 
@@ -58,64 +43,46 @@ Run:
 waid init
 ```
 
-If you skipped activation, run:
-
-```bash
-.venv/bin/waid init
-```
-
-The setup wizard will ask for:
-
-- your LLM endpoint
-- your model name
-- broad categories you care about
-- context commands like `sp task list --today --json`
-- action commands like `sp task start` or `ha`
-- short extra instructions
-
-Your config will be written to:
+This writes:
 
 ```text
 ~/.config/waid/config.yaml
 ```
 
-If you want to start from a file instead, copy [config.example.yaml](/home/onur/.openclaw/workspace-coding/code/what-am-i-doing/config.example.yaml).
+`waid init` only asks for model connection details. Then edit the file and add your `choices`.
 
-### 3. Install the GNOME extension
+If you want to start from a file instead, copy [config.example.yaml](/home/onur/Code/what-am-i-doing/config.example.yaml).
 
-Right now the extension is targeted at GNOME 49.
+### 3. Install the GNOME Extension
 
 ```bash
 waid extension install
 gnome-extensions enable waid@onesvat.github.io
 ```
 
-If `gnome-extensions enable waid@onesvat.github.io` says the extension does not exist yet, log out and back in first, then run the command again.
+If GNOME does not see the extension yet, log out and back in first.
 
-If you do not see the top bar item after enabling, restart GNOME Shell or log out and back in.
-
-### 4. Install the service
+### 4. Install the Service
 
 ```bash
 waid service install --now
 ```
 
-That makes `waid` run as a user service in the background.
-
 ## Daily Commands
 
-These are the commands you will actually use most of the time:
+These are the main commands:
 
 ```bash
 waid status
 waid refresh
 waid stats
-waid doctor
 waid service status
 waid service logs
+waid tracking pause
+waid tracking resume
 ```
 
-Useful config helpers:
+Useful helpers:
 
 ```bash
 waid config path
@@ -123,66 +90,14 @@ waid config validate
 waid extension status
 ```
 
-### Debug Mode
+`waid refresh` reloads `config.yaml` and any imported choice files. Use it after changing your config or regenerating an import file.
 
-If you want to debug what `waid` receives and what it sends to the model, start it with:
+## Config Shape
 
-```bash
-WAID_DEBUG=1 waid run
-```
-
-Or for the service:
-
-```bash
-systemctl --user edit waid.service
-```
-
-Add:
-
-```ini
-[Service]
-Environment=WAID_DEBUG=1
-```
-
-Then reload and restart:
-
-```bash
-systemctl --user daemon-reload
-systemctl --user restart waid.service
-```
-
-Debug entries are written to:
-
-```text
-~/.local/state/waid/debug.jsonl
-```
-
-This includes provider state, rendered prompts, raw LLM responses, classifier results, and tool execution output.
-
-For a human-readable view, use:
-
-```bash
-waid debug logs
-```
-
-Follow live debug output:
-
-```bash
-waid debug logs --follow
-```
-
-If you still want the raw JSON lines:
-
-```bash
-waid debug logs --json
-```
-
-## The Config, Explained Simply
-
-The config is small on purpose.
+The config is intentionally flat and small.
 
 ```yaml
-version: 1
+version: 2
 
 model:
   base_url: http://localhost:11434/v1
@@ -191,256 +106,74 @@ model:
   timeout_seconds: 30
   temperature: 0.0
 
-generator:
-  interval_minutes: 5
-  retry_count: 1
-  categories:
-    - name: coding
-    - name: writing
-    - name: learning
-    - name: communication
-    - name: admin
-    - name: browsing
-    - name: media
-  instructions: |
-    Keep the taxonomy small and practical.
-    Create child categories only for active projects or repeated work you expect today.
-
 classifier:
   retry_count: 2
   instructions: |
-    Classify by current intention, not just the app name.
-    Prefer the most specific category.
-    Switch immediately when the user's intention changes.
+    Prefer work/project-a for that repo.
+    Use browsing/reference for generic reading.
+    Return unknown when nothing fits.
+
+choices:
+  - path: work/project-a
+    description: Main project work
+    icon: laptop-symbolic
+    actions:
+      - tool: sp_start
+        args: ["123"]
+  - path: browsing/reference
+    description: Reading and lookup
+    icon: text-x-generic-symbolic
+  - import: ~/.config/waid/choices.yaml
 
 tools:
-  context: {}
-  actions: {}
+  actions:
+    sp_start:
+      run: ["sp", "task", "start"]
+
+idle_threshold_seconds: 60
+classify_idle: true
 ```
 
-### `model`
+## Choice Imports
 
-This is the shared model config for both generator and classifier.
-
-- `base_url`: your OpenAI-compatible endpoint
-- `name`: model id
-- `api_key_env`: env var used for the API key
-- `timeout_seconds`: request timeout
-- `temperature`: model temperature
-
-### `generator`
-
-This is the slower loop.
-
-It:
-
-- reads your broad categories
-- runs context commands
-- builds a runtime category tree
-
-### `classifier`
-
-This is the fast loop that runs on window changes.
-
-It:
-
-- receives the current desktop event
-- sees the generated category list
-- returns one allowed category path
-
-It does not run tools directly.
-
-### `tools.context`
-
-These commands give extra daily context to the generator.
+Imports are plain YAML files that contain the same flat list shape used under `choices`.
 
 Example:
 
 ```yaml
-tools:
-  context:
-    sp_today_tasks:
-      run: ["sp", "task", "list", "--today", "--json"]
+- path: work/project-b
+  description: Another active project
+  icon: laptop-symbolic
+- path: admin/inbox
+  description: Inbox cleanup and planning
 ```
 
-Then you can use the output inside `generator.instructions` like this:
+`waid` does not run scripts to produce this file. If you want dynamic choices, generate the YAML yourself with your own script, then run `waid refresh`.
 
-```text
-${sp_today_tasks}
-```
+## GNOME Panel Behavior
 
-### `tools.actions`
+The extension shows:
 
-These are the only commands `waid` is allowed to execute as actions.
+- the current selected path
+- every configured choice from the current config, even if its time is `0m`
+- any extra paths that already appear in today's spans, even if they were removed from the config later
 
-Example:
+The extension does not build its own menu model. It renders the rows produced by the daemon.
 
-```yaml
-tools:
-  actions:
-    sp_start_task:
-      run: ["sp", "task", "start"]
-```
-
-If the generated taxonomy returns:
-
-```json
-{"tool":"sp_start_task","args":["123"]}
-```
-
-`waid` will run:
-
-```bash
-sp task start 123
-```
-
-## Common Setups
-
-### ✅ Super Productivity Example
-
-Use a context tool for today's tasks:
-
-```yaml
-tools:
-  context:
-    sp_today_tasks:
-      run: ["sp", "task", "list", "--today", "--json"]
-```
-
-Use an action tool for switching:
-
-```yaml
-tools:
-  actions:
-    sp_start_task:
-      run: ["sp", "task", "start"]
-```
-
-Then guide the generator with something like:
-
-```text
-Today's tasks:
-${sp_today_tasks}
-
-Create useful child categories only when they clearly match these tasks.
-```
-
-### ✅ Home Assistant
-
-```yaml
-tools:
-  actions:
-    ha:
-      run: ["ha"]
-```
-
-Then generated categories can trigger:
-
-```json
-{"tool":"ha","args":["coding"]}
-```
-
-Which becomes:
-
-```bash
-ha coding
-```
-
-### ✅ Telegram Notifications
-
-```yaml
-tools:
-  actions:
-    telegram:
-      run: ["telegram-send"]
-```
-
-You can attach Telegram notifications to any generated category you want.
-
-Examples:
-
-- notify when you enter a distraction-related browsing category
-- notify when an admin session starts
-- notify when a work session moves into a specific project
-
-## Files `waid` Writes
+## State Files
 
 Inside `~/.local/state/waid/`:
 
-- `raw-events.jsonl` → every raw GNOME event
-- `activity.jsonl` → category changes
-- `taxonomy.json` → last good generated taxonomy
-- `status.json` → current selected path
-- `spans.jsonl` → duration spans used by stats
+- `raw-events.jsonl` records raw GNOME window events
+- `activity.jsonl` records selection changes
+- `status.json` stores the current UI payload used by the extension
+- `spans.jsonl` stores closed activity spans for stats
+- `tracking.json` stores paused/resumed state
+- `debug.jsonl` stores debug events when `WAID_DEBUG=1`
 
-## Conventions
+## Notes
 
-These are worth knowing:
-
-- tool names should look like `sp_start_task` or `ha`
-- commands must be argv arrays, not shell strings
-- category names cannot contain `/`
-- top-level categories should stay broad
-- child categories should be useful enough to trigger real actions
-
-## Troubleshooting
-
-### `waid status` says `source: state-file`
-
-That usually means the daemon is not reachable over D-Bus.
-
-Check:
-
-```bash
-waid service status
-waid service logs
-```
-
-### The GNOME top bar item is missing
-
-Check:
-
-```bash
-waid extension status
-waid doctor
-```
-
-Then restart GNOME Shell or log out and back in.
-
-### GNOME says the extension is `OUT OF DATE`
-
-This usually means GNOME Shell has not reloaded the extension metadata yet.
-
-After `waid extension install`, log out and back in, then run:
-
-```bash
-gnome-extensions enable waid@onesvat.github.io
-```
-
-### A command never runs
-
-Check:
-
-- the command exists in `PATH`
-- the tool name used by the taxonomy exists in `tools.actions`
-- the command works manually in your terminal
-
-### The model keeps choosing invalid categories
-
-Make the classifier instructions shorter and stricter.
-
-Good rule:
-
-- return only one path
-- use `unclassified` only when no category fits
-
-## Current Limits
-
-- GNOME only
-- one shared model block for generator and classifier
-- classifier does not run tools
-- extension install is handled by CLI, but GNOME enabling is still a separate command
-
-## Developer Note
-
-The user-facing product is called `waid`, but the Python package name is still `what_am_i_doing`.
+- `unknown` is the reserved fallback returned by the classifier when no configured path fits.
+- `idle` is operational state, not a user-defined choice.
+- Action commands must be argv arrays, not shell strings.
+- Choice paths must be unique.

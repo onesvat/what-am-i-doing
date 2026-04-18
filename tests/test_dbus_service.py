@@ -4,17 +4,18 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import AsyncMock, Mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from what_am_i_doing.dbus_service import DaemonInterface
-from what_am_i_doing.models import PanelStateRecord, RefreshResult, utcnow
+from what_am_i_doing.dbus_service import DaemonInterface, _disconnect_bus
+from what_am_i_doing.models import DisplayRow, PanelStateRecord, RefreshResult, UIStateRecord, utcnow
 
 
-async def _noop_refresh() -> RefreshResult:
+async def _noop_reload() -> RefreshResult:
     return RefreshResult(success=True, message="ok")
 
 
@@ -23,52 +24,121 @@ async def _noop_set_tracking(enabled: bool) -> None:
 
 
 class DBusServiceTest(unittest.IsolatedAsyncioTestCase):
+    def test_refresh_taxonomy_alias_is_removed(self) -> None:
+        self.assertFalse(hasattr(DaemonInterface, "RefreshTaxonomy"))
+
     def test_panel_properties_follow_internal_state(self) -> None:
-        initial = PanelStateRecord.disconnected(revision=0, published_at=utcnow())
-        interface = DaemonInterface(_noop_refresh, _noop_set_tracking, initial, True)
+        initial = PanelStateRecord.disconnected(
+            revision=0,
+            published_at=utcnow(),
+            choices_hash="hash-0",
+        )
+        initial_ui = UIStateRecord.from_panel_state(
+            initial,
+            tracking_enabled=True,
+            display_label="disconnected",
+            display_rows=[],
+        )
+        interface = DaemonInterface(
+            _noop_reload,
+            _noop_set_tracking,
+            initial,
+            initial_ui,
+            True,
+        )
 
         self.assertEqual(0, interface.PanelRevision)
         self.assertEqual("disconnected", interface.PanelKind)
         self.assertEqual("", interface.PanelPath)
         self.assertEqual("network-offline-symbolic", interface.PanelIconName)
-        self.assertEqual("", interface.PanelTaxonomyHash)
+        self.assertEqual("hash-0", interface.PanelChoicesHash)
 
         updated = PanelStateRecord.classified(
             revision=7,
-            path="coding/project-x",
-            top_level_id="coding",
-            top_level_label="coding",
+            path="work/project-a",
+            top_level_id="work",
+            top_level_label="work",
             icon_name="laptop-symbolic",
             published_at=utcnow(),
-            taxonomy_hash="abc123",
+            choices_hash="abc123",
         )
         interface.update_panel_state(updated)
 
         self.assertEqual(7, interface.PanelRevision)
         self.assertEqual("classified", interface.PanelKind)
-        self.assertEqual("coding/project-x", interface.PanelPath)
-        self.assertEqual("coding", interface.PanelTopLevelId)
-        self.assertEqual("coding", interface.PanelTopLevelLabel)
+        self.assertEqual("work/project-a", interface.PanelPath)
+        self.assertEqual("work", interface.PanelTopLevelId)
+        self.assertEqual("work", interface.PanelTopLevelLabel)
         self.assertEqual("laptop-symbolic", interface.PanelIconName)
-        self.assertEqual("abc123", interface.PanelTaxonomyHash)
-        self.assertEqual(7, interface._panel_state.revision)
-        self.assertEqual(updated.payload_json(), interface._panel_state_json)
+        self.assertEqual("abc123", interface.PanelChoicesHash)
 
-    def test_legacy_status_json_stays_compatible(self) -> None:
+    def test_get_ui_state_returns_current_payload(self) -> None:
         panel_state = PanelStateRecord.unclassified(
             revision=2,
             published_at=utcnow(),
-            taxonomy_hash="hash-1",
+            choices_hash="hash-1",
+        )
+        ui_state = UIStateRecord.from_panel_state(
+            panel_state,
+            tracking_enabled=True,
+            display_label="unknown",
+            display_rows=[
+                DisplayRow(
+                    path="work/project-a",
+                    label="work/project-a",
+                    icon_name="laptop-symbolic",
+                    seconds=120,
+                )
+            ],
         )
         interface = DaemonInterface(
-            _noop_refresh, _noop_set_tracking, panel_state, True
+            _noop_reload,
+            _noop_set_tracking,
+            panel_state,
+            ui_state,
+            True,
+        )
+
+        payload = json.loads(interface._ui_state_json)
+
+        self.assertEqual("unknown", payload["display_label"])
+        self.assertEqual("hash-1", payload["choices_hash"])
+        self.assertEqual("work/project-a", payload["display_rows"][0]["path"])
+
+    def test_legacy_status_json_uses_choices_hash(self) -> None:
+        panel_state = PanelStateRecord.unclassified(
+            revision=2,
+            published_at=utcnow(),
+            choices_hash="hash-1",
+        )
+        ui_state = UIStateRecord.from_panel_state(
+            panel_state,
+            tracking_enabled=True,
+            display_label="unknown",
+            display_rows=[],
+        )
+        interface = DaemonInterface(
+            _noop_reload,
+            _noop_set_tracking,
+            panel_state,
+            ui_state,
+            True,
         )
 
         payload = json.loads(interface._legacy_status_json)
         self.assertEqual("unclassified", payload["current_path"])
         self.assertEqual("unclassified", payload["top_level"])
         self.assertEqual("help-about-symbolic", payload["icon"])
-        self.assertEqual("hash-1", payload["taxonomy_hash"])
+        self.assertEqual("hash-1", payload["choices_hash"])
+
+    async def test_disconnect_bus_waits_for_actual_disconnect(self) -> None:
+        bus = Mock()
+        bus.wait_for_disconnect = AsyncMock()
+
+        await _disconnect_bus(bus)
+
+        bus.disconnect.assert_called_once_with()
+        bus.wait_for_disconnect.assert_awaited_once_with()
 
 
 if __name__ == "__main__":

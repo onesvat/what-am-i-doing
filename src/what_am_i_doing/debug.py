@@ -85,31 +85,20 @@ def format_debug_entry(entry: dict[str, Any]) -> str:
         title = focused.get("title") or "-"
         wm_class = focused.get("wm_class") or "-"
         previous = entry.get("previous_path") or "none"
-        return f"{timestamp} provider: title={title!r} app={wm_class} previous={previous}"
+        return (
+            f"{timestamp} provider: title={title!r} app={wm_class} previous={previous}"
+        )
 
-    if event == "taxonomy_refresh_start":
-        context_names = sorted((entry.get("context_outputs") or {}).keys())
-        return f"{timestamp} generator: refresh started with context={', '.join(context_names) or 'none'}"
+    if event == "config_reload_start":
+        choices = entry.get("choices") or []
+        return f"{timestamp} config: reload started with {len(choices)} current choices"
 
-    if event == "taxonomy_refresh_complete":
-        categories = entry.get("categories") or []
-        return f"{timestamp} generator: taxonomy ready with {len(categories)} paths"
+    if event == "config_reload_complete":
+        choices = entry.get("choices") or []
+        return f"{timestamp} config: reload complete with {len(choices)} choices"
 
-    if event == "taxonomy_refresh_failed":
-        return f"{timestamp} generator: refresh failed: {entry.get('error', '-')}"
-
-    if event == "generator_attempt":
-        context_names = sorted((entry.get("context_outputs") or {}).keys())
-        attempt = entry.get("attempt", 0)
-        return f"{timestamp} generator: attempt {attempt} using context={', '.join(context_names) or 'none'}"
-
-    if event == "generator_result":
-        taxonomy = entry.get("taxonomy") or {}
-        categories = taxonomy.get("categories") or []
-        return f"{timestamp} generator: produced {len(categories)} top-level categories"
-
-    if event == "generator_error":
-        return f"{timestamp} generator: error on attempt {entry.get('attempt', 0)}: {entry.get('error', '-')}"
+    if event == "config_reload_failed":
+        return f"{timestamp} config: reload failed: {entry.get('error', '-')}"
 
     if event == "classifier_attempt":
         previous = entry.get("previous_path") or "none"
@@ -194,7 +183,11 @@ def format_debug_entry(entry: dict[str, Any]) -> str:
     if event == "malformed_debug_line":
         return f"{timestamp} debug: malformed line {_shorten(entry.get('raw'))}"
 
-    extra = ", ".join(f"{key}={_shorten(value)}" for key, value in sorted(entry.items()) if key not in {"ts", "event"})
+    extra = ", ".join(
+        f"{key}={_shorten(value)}"
+        for key, value in sorted(entry.items())
+        if key not in {"ts", "event"}
+    )
     return f"{timestamp} {event}: {extra}"
 
 

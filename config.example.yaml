@@ -1,4 +1,4 @@
-version: 1
+version: 2
 
 model:
   base_url: http://localhost:11434/v1
@@ -7,35 +7,41 @@ model:
   timeout_seconds: 30
   temperature: 0.0
 
-generator:
-  interval_minutes: 5
-  retry_count: 1
-  categories:
-    - name: coding
-    - name: writing
-    - name: learning
-    - name: communication
-    - name: admin
-    - name: browsing
-    - name: media
-    - name: gaming
-    - name: adult
-  instructions: |
-    Keep the taxonomy small and practical.
-    Create child categories only for active projects, recurring work, or clearly distinct distractions.
-
 classifier:
   retry_count: 2
   instructions: |
-    Classify by current intention, not just the app name.
-    Prefer the most specific category.
-    Switch immediately when the user's intention changes.
+    Prefer work/project-a for that repo.
+    Use browsing/reference for generic reading.
+    Return unknown when nothing fits.
+
+choices:
+  - path: work/project-a
+    description: Main project work
+    icon: laptop-symbolic
+    actions:
+      - tool: sp_start
+        args: ["123"]
+  - path: browsing/reference
+    description: Reading and lookup
+    icon: text-x-generic-symbolic
 
 tools:
-  context: {}
-  actions: {}
-
-learned: []
+  actions:
+    sp_start:
+      run: ["sp", "task", "start"]
+    sp_stop:
+      run: ["sp", "task", "stop"]
 
 idle_threshold_seconds: 60
 classify_idle: true
+
+# Import example:
+# choices:
+#   - import: ~/.config/waid/choices.yaml
+#
+# Imported files must contain the same flat choice shape:
+# - path: work/project-b
+#   description: Another active project
+#   icon: laptop-symbolic
+# - path: admin/inbox
+#   description: Inbox cleanup and planning

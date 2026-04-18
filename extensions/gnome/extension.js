@@ -28,10 +28,7 @@ const PAUSED_ICON = 'media-playback-pause-symbolic';
 
 const STATE_DIR = GLib.build_filenamev([GLib.get_home_dir(), '.local', 'state', 'waid']);
 const STATUS_FILE = GLib.build_filenamev([STATE_DIR, 'status.json']);
-const SPANS_FILE = GLib.build_filenamev([STATE_DIR, 'spans.jsonl']);
-const TAXONOMY_FILE = GLib.build_filenamev([STATE_DIR, 'taxonomy.json']);
 const CONFIG_FILE = GLib.build_filenamev([GLib.get_home_dir(), '.config', 'waid', 'config.yaml']);
-const POLL_INTERVAL_SECONDS = 3;
 const REPORT_INTERVAL_SECONDS = 30;
 
 const TRACKER_IFACE = `
@@ -83,8 +80,6 @@ export default class WaidExtension extends Extension {
         this._statusMonitorSignalId = 0;
         this._reportSourceId = 0;
         this._currentStatus = null;
-        this._taxonomyIcons = new Map();
-        this._taxonomyHash = null;
         this._trackerRevision = 0;
         this._trackerStateJson = '';
         this._titleWatchSignalId = null;
@@ -234,21 +229,16 @@ export default class WaidExtension extends Extension {
             this._setDisconnected();
             return;
         }
-        // Refresh taxonomy icon cache if hash changed
-        if (status.taxonomy_hash && status.taxonomy_hash !== this._taxonomyHash) {
-            this._loadTaxonomy();
-            this._taxonomyHash = status.taxonomy_hash;
-        }
         this._currentStatus = status;
         if (status.kind === PANEL_KIND_CLASSIFIED) {
             this._indicator.setStatus(
-                status.path || status.top_level_label || status.top_level_id || PANEL_KIND_CLASSIFIED,
+                status.display_label || status.path || PANEL_KIND_CLASSIFIED,
                 status.icon_name
             );
         } else if (status.kind === PANEL_KIND_UNCLASSIFIED) {
-            this._indicator.setStatus(PANEL_KIND_UNCLASSIFIED, status.icon_name || UNCLASSIFIED_ICON);
+            this._indicator.setStatus(status.display_label || PANEL_KIND_UNCLASSIFIED, status.icon_name || UNCLASSIFIED_ICON);
         } else if (status.kind === PANEL_KIND_PAUSED) {
-            this._indicator.setStatus(PANEL_KIND_PAUSED, status.icon_name || PAUSED_ICON);
+            this._indicator.setStatus(status.display_label || PANEL_KIND_PAUSED, status.icon_name || PAUSED_ICON);
         } else {
             this._setDisconnected();
         }
@@ -276,7 +266,7 @@ export default class WaidExtension extends Extension {
     }
 
     _requestRefresh() {
-        this._callDaemon('RefreshTaxonomy');
+        this._callDaemon('ReloadConfig');
     }
 
     _setTracking(enabled) {
@@ -301,25 +291,6 @@ export default class WaidExtension extends Extension {
                 }
             }
         );
-    }
-
-    // --- Taxonomy icon cache ---
-
-    _loadTaxonomy() {
-        try {
-            const [ok, contents] = GLib.file_get_contents(TAXONOMY_FILE);
-            if (!ok) return;
-            const text = new TextDecoder().decode(contents);
-            const taxonomy = JSON.parse(text);
-            this._taxonomy = taxonomy;
-            this._taxonomyIcons = new Map();
-            for (const cat of (taxonomy.categories || [])) {
-                if (cat.icon) this._taxonomyIcons.set(cat.name, cat.icon);
-                for (const child of (cat.children || [])) {
-                    if (child.icon) this._taxonomyIcons.set(`${cat.name}/${child.name}`, child.icon);
-                }
-            }
-        } catch (_) {}
     }
 
     // --- Rich popup menu ---
@@ -357,44 +328,22 @@ export default class WaidExtension extends Extension {
         headerItem.add_child(headerLabel);
         this._indicator.menu.addMenuItem(headerItem);
 
-        // Today's stats with radio selection
+        // Today's stats from daemon payload
         this._indicator.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('Today'));
-        
-        const currentPath = this._currentStatus?.path || '';
-        const spans = this._readTodaysSpans();
-        const agg = this._aggregateSpans(spans);
+        const rows = Array.isArray(this._currentStatus?.display_rows)
+            ? this._currentStatus.display_rows
+            : [];
         let total = 0;
-        
-        if (this._taxonomy && this._taxonomy.categories) {
-            for (const cat of this._taxonomy.categories) {
-                const catPath = cat.name;
-                const catData = agg.get(catPath) || {total: 0, subs: new Map()};
-                const catSeconds = catData.total;
-                const catSelected = currentPath === catPath;
-                const catIcon = this._taxonomyIcons.get(catPath) || 'folder-symbolic';
-                const catHasChildren = (cat.children && cat.children.length > 0);
-                
-                total += catSeconds;
 
-                if (this._shouldShowStatRow(catSeconds)) {
-                    this._addRadioStatRow(cat.name, catPath, catSeconds, catIcon, false, catSelected, catHasChildren);
-                }
-                
-                for (const child of (cat.children || [])) {
-                    const childPath = `${cat.name}/${child.name}`;
-                    const childSeconds = catData.subs.get(childPath) || 0;
-                    const childSelected = currentPath === childPath;
-                    const childIcon = this._taxonomyIcons.get(childPath) || null;
-
-                    if (this._shouldShowStatRow(childSeconds)) {
-                        this._addRadioStatRow(child.name, childPath, childSeconds, childIcon, true, childSelected, false);
-                    }
-                }
+        if (rows.length > 0) {
+            for (const row of rows) {
+                total += row.seconds || 0;
+                this._addDisplayRow(row);
             }
         } else {
             const emptyItem = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
             emptyItem.add_child(new St.Label({
-                text: 'No categories defined',
+                text: 'No choices configured',
                 y_align: Clutter.ActorAlign.CENTER,
             }));
             this._indicator.menu.addMenuItem(emptyItem);
@@ -420,7 +369,7 @@ export default class WaidExtension extends Extension {
         // Actions
         this._indicator.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
-        const refreshItem = new PopupMenu.PopupMenuItem('Refresh Categories');
+        const refreshItem = new PopupMenu.PopupMenuItem('Reload Choices');
         refreshItem.connect('activate', () => this._requestRefresh());
         this._indicator.menu.addMenuItem(refreshItem);
 
@@ -444,28 +393,29 @@ export default class WaidExtension extends Extension {
     _currentActivityLabel() {
         const s = this._currentStatus;
         if (!s) return PANEL_KIND_DISCONNECTED;
-        if (s.kind === PANEL_KIND_CLASSIFIED) return s.path || s.top_level_label || PANEL_KIND_CLASSIFIED;
+        if (s.display_label) return s.display_label;
+        if (s.kind === PANEL_KIND_CLASSIFIED) return s.path || PANEL_KIND_CLASSIFIED;
         if (s.kind === PANEL_KIND_UNCLASSIFIED) return PANEL_KIND_UNCLASSIFIED;
         if (s.kind === PANEL_KIND_PAUSED) return PANEL_KIND_PAUSED;
         return PANEL_KIND_DISCONNECTED;
     }
 
-    _addRadioStatRow(label, fullPath, seconds, iconName, isSubcategory, isSelected, hasChildren) {
+    _addDisplayRow(row) {
         const item = new PopupMenu.PopupMenuItem('');
         item.add_style_class_name('waid-stat-row');
         item.sensitive = false;
-        
-        if (isSubcategory) {
-            item.add_style_class_name('waid-subcategory-item');
-        }
-        
-        if (isSelected) {
+
+        if (row.is_selected) {
             item.add_style_class_name('waid-selected-row');
         }
-        
-        if (iconName) {
+
+        if (row.is_legacy) {
+            item.add_style_class_name('waid-legacy-row');
+        }
+
+        if (row.icon_name) {
             const catIcon = new St.Icon({
-                icon_name: iconName,
+                icon_name: row.icon_name,
                 style_class: 'waid-stat-icon popup-menu-icon',
             });
             item.add_child(catIcon);
@@ -474,14 +424,14 @@ export default class WaidExtension extends Extension {
         }
         
         const nameLabel = new St.Label({
-            text: label,
-            style_class: isSelected ? 'waid-selected-label' : '',
+            text: row.label || row.path || '',
+            style_class: row.is_selected ? 'waid-selected-label' : '',
             x_expand: true,
             y_align: Clutter.ActorAlign.CENTER,
         });
         
         const durLabel = new St.Label({
-            text: this._formatDuration(seconds),
+            text: this._formatDuration(row.seconds || 0),
             style_class: 'waid-duration',
             y_align: Clutter.ActorAlign.CENTER,
         });
@@ -490,10 +440,6 @@ export default class WaidExtension extends Extension {
         item.add_child(durLabel);
         
         this._indicator.menu.addMenuItem(item);
-    }
-
-    _shouldShowStatRow(seconds) {
-        return seconds >= 60;
     }
 
     _formatDuration(seconds) {
@@ -506,61 +452,6 @@ export default class WaidExtension extends Extension {
         return `${hours}h ${minutes}m`;
     }
 
-    _todayDateString() {
-        const now = new Date();
-        const y = now.getFullYear();
-        const m = String(now.getMonth() + 1).padStart(2, '0');
-        const d = String(now.getDate()).padStart(2, '0');
-        return `${y}-${m}-${d}`;
-    }
-
-    _readTodaysSpans() {
-        try {
-            const file = Gio.File.new_for_path(SPANS_FILE);
-            if (file.query_exists(null)) {
-                const info = file.query_info(Gio.FILE_ATTRIBUTE_STANDARD_SIZE, Gio.FileQueryInfoFlags.NONE, null);
-                if (info.get_size() > 5 * 1024 * 1024) {
-                    log(`${this.uuid}: spans.jsonl is too large (>5MB), skipping read to prevent UI block`);
-                    return [];
-                }
-            }
-            const [ok, contents] = GLib.file_get_contents(SPANS_FILE);
-            if (!ok) return [];
-            const text = new TextDecoder().decode(contents);
-            const lines = text.split('\n');
-            const todayStr = this._todayDateString();
-            const spans = [];
-            for (let i = lines.length - 1; i >= 0; i--) {
-                const line = lines[i].trim();
-                if (!line) continue;
-                if (!line.includes(todayStr)) break;
-                try {
-                    const span = JSON.parse(line);
-                    if (span.started_at && span.started_at.startsWith(todayStr)) {
-                        spans.push(span);
-                    } else {
-                        break;
-                    }
-                } catch (_) { continue; }
-            }
-            return spans;
-        } catch (_) {
-            return [];
-        }
-    }
-
-    _aggregateSpans(spans) {
-        const byTop = new Map();
-        for (const span of spans) {
-            const top = span.top_level || span.path.split('/')[0];
-            if (!byTop.has(top)) byTop.set(top, {total: 0, subs: new Map()});
-            const entry = byTop.get(top);
-            entry.total += span.duration_seconds;
-            const cur = entry.subs.get(span.path) || 0;
-            entry.subs.set(span.path, cur + span.duration_seconds);
-        }
-        return byTop;
-    }
 
     // --- WindowTracker D-Bus service (unchanged) ---
 

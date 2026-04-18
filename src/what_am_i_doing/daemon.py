@@ -2,51 +2,54 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 import hashlib
 import json
+from pathlib import Path
 from typing import Any
 
 from .actions import CommandRunner
 from .classifier import EventClassifier
-from .config import AppConfig
+from .config import AppConfig, default_config_path, load_config
 from .constants import (
+    IDLE_ICON,
     PANEL_KIND_CLASSIFIED,
     PANEL_KIND_DISCONNECTED,
     PANEL_KIND_PAUSED,
     PANEL_KIND_UNCLASSIFIED,
+    UNKNOWN_CHOICE_PATH,
 )
 from .debug import DebugLogger, debug_enabled
 from .dbus_service import DaemonDBusService
-from .generator import TaxonomyGenerator
 from .llm import OpenAICompatibleClient
 from .models import (
     AppPaths,
+    ChoiceRegistry,
+    DisplayRow,
     PanelStateRecord,
     ProviderSnapshot,
     RefreshResult,
     SpanRecord,
-    Taxonomy,
+    UIStateRecord,
     utcnow,
 )
 from .providers import GnomeProvider
 from .storage import (
     append_jsonl,
     ensure_state_dir,
+    load_spans,
     load_status,
-    load_taxonomy,
     load_tracking,
     save_span,
-    save_status,
-    save_taxonomy,
     save_tracking,
+    save_ui_state,
 )
 
 
 @dataclass(slots=True)
 class RuntimeState:
-    taxonomy: Taxonomy
-    taxonomy_hash: str
+    choices: ChoiceRegistry
+    choices_hash: str
     panel_state: PanelStateRecord
     last_classified_started_at: datetime | None
     last_snapshot: ProviderSnapshot | None
@@ -54,13 +57,17 @@ class RuntimeState:
 
 
 class ActivityDaemon:
-    def __init__(self, config: AppConfig) -> None:
+    def __init__(
+        self, config: AppConfig, *, config_path: str | Path | None = None
+    ) -> None:
         self.config = config
+        self.config_path = (
+            Path(config_path).expanduser() if config_path else default_config_path()
+        )
         self.paths = AppPaths.from_state_dir(config.state_dir)
         ensure_state_dir(self.paths)
         self.debug = DebugLogger(self.paths.debug_log, enabled=debug_enabled())
         self.client = OpenAICompatibleClient(self.debug)
-        self.generator = TaxonomyGenerator(self.client, self.debug)
         self.classifier = EventClassifier(self.client, self.debug)
         self.command_runner = CommandRunner(self.debug)
         self.provider = GnomeProvider()
@@ -68,22 +75,25 @@ class ActivityDaemon:
         self.runtime = self._load_runtime_state()
         self._refresh_lock = asyncio.Lock()
         self.dbus_service = DaemonDBusService(
-            self.refresh_taxonomy,
+            self.reload_config,
             self.set_tracking,
             self.runtime.panel_state,
+            self._build_ui_state(),
             self.runtime.tracking_enabled,
         )
 
     def _load_runtime_state(self) -> RuntimeState:
-        taxonomy = self.config.normalize_generated_taxonomy(
-            load_taxonomy(self.paths.taxonomy_json) or self.config.seed_taxonomy()
-        )
-        taxonomy_hash = taxonomy.fingerprint()
+        choices = self.config.choice_registry()
+        choices_hash = choices.fingerprint()
         panel_state = load_status(self.paths.status_json)
         if panel_state is None:
             panel_state = PanelStateRecord.disconnected(
-                revision=0, published_at=utcnow()
+                revision=0,
+                published_at=utcnow(),
+                choices_hash=choices_hash,
             )
+        else:
+            panel_state = panel_state.model_copy(update={"choices_hash": choices_hash})
         last_classified_started_at = (
             panel_state.published_at
             if panel_state.kind == PANEL_KIND_CLASSIFIED
@@ -91,52 +101,49 @@ class ActivityDaemon:
         )
         tracking_enabled = load_tracking(self.paths.tracking_json)
         return RuntimeState(
-            taxonomy=taxonomy,
-            taxonomy_hash=taxonomy_hash,
+            choices=choices,
+            choices_hash=choices_hash,
             panel_state=panel_state,
             last_classified_started_at=last_classified_started_at,
             last_snapshot=None,
             tracking_enabled=tracking_enabled,
         )
 
-    async def refresh_taxonomy(self) -> RefreshResult:
+    async def reload_config(self) -> RefreshResult:
         async with self._refresh_lock:
-            context_outputs: dict[str, str] = {}
-            for name, tool in self.config.tools.context.items():
-                try:
-                    result = await self.command_runner.run(tool, [])
-                except Exception as exc:
-                    context_outputs[name] = "<unavailable>"
-                    self.debug.log(
-                        "context_tool_unavailable",
-                        tool_name=name,
-                        error=str(exc),
-                    )
-                    continue
-                context_outputs[name] = self._context_output_for_prompt(result)
-            self.debug.log("taxonomy_refresh_start", context_outputs=context_outputs)
-            try:
-                taxonomy = await self.generator.generate(self.config, context_outputs)
-                message = f"Generated {len(taxonomy.allowed_paths())} categories"
-                result = RefreshResult(success=True, message=message, used_cached=False)
-            except Exception as exc:
-                self.debug.log("taxonomy_refresh_failed", error=str(exc))
-                taxonomy = self.config.normalize_generated_taxonomy(
-                    load_taxonomy(self.paths.taxonomy_json)
-                    or self.config.seed_taxonomy()
-                )
-                message = f"Generator failed ({exc}), using cached taxonomy"
-                result = RefreshResult(success=False, message=message, used_cached=True)
-            self.runtime.taxonomy = taxonomy
-            self.runtime.taxonomy_hash = taxonomy.fingerprint()
-            save_taxonomy(self.paths.taxonomy_json, taxonomy)
+            previous_paths = self.runtime.choices.allowed_paths()
             self.debug.log(
-                "taxonomy_refresh_complete",
-                taxonomy_hash=self.runtime.taxonomy_hash,
-                categories=sorted(taxonomy.allowed_paths()),
+                "config_reload_start",
+                choices=sorted(previous_paths),
             )
-            await self._reconcile_panel_state_after_taxonomy_refresh()
-            return result
+            try:
+                config = load_config(self.config_path)
+                choices = config.choice_registry()
+            except Exception as exc:
+                self.debug.log("config_reload_failed", error=str(exc))
+                return RefreshResult(
+                    success=False,
+                    message=f"Reload failed ({exc}), keeping current choices",
+                    used_cached=True,
+                )
+
+            self.config = config
+            self.runtime.choices = choices
+            self.runtime.choices_hash = choices.fingerprint()
+            self.decision_cache.clear()
+            message = describe_choice_reload(
+                previous_paths,
+                choices.allowed_paths(),
+                self.runtime.choices_hash,
+            )
+            self.debug.log(
+                "config_reload_complete",
+                choices_hash=self.runtime.choices_hash,
+                choices=sorted(choices.allowed_paths()),
+            )
+            await self._reconcile_panel_state_after_reload()
+            self._publish_ui_state()
+            return RefreshResult(success=True, message=message, used_cached=False)
 
     async def set_tracking(self, enabled: bool) -> None:
         if self.runtime.tracking_enabled == enabled:
@@ -152,19 +159,12 @@ class ActivityDaemon:
 
     async def run(self) -> None:
         await self.dbus_service.start()
-        await self.refresh_taxonomy()
+        self._publish_ui_state()
         if self.runtime.tracking_enabled:
             await self._publish_disconnected(reason="startup")
         else:
             await self._publish_paused()
-        await asyncio.gather(self._refresh_loop(), self._provider_loop())
-
-    async def _refresh_loop(self) -> None:
-        if self.config.generator.interval_minutes == -1:
-            return
-        while True:
-            await asyncio.sleep(self.config.generator.interval_minutes * 60)
-            await self.refresh_taxonomy()
+        await self._provider_loop()
 
     async def _provider_loop(self) -> None:
         while True:
@@ -195,7 +195,7 @@ class ActivityDaemon:
             selected = await self.classifier.classify(
                 self.config,
                 state,
-                self.runtime.taxonomy,
+                self.runtime.choices,
                 previous_selection,
             )
             self.decision_cache[cache_key] = selected
@@ -207,15 +207,15 @@ class ActivityDaemon:
                 "classifier_cache_hit", cache_key=cache_key, selected_path=selected
             )
 
-        if (
-            self._current_selection() == selected
-            and self.runtime.panel_state.kind != PANEL_KIND_DISCONNECTED
-        ):
+        if self._current_selection() == selected:
             self.debug.log("activity_unchanged", selected_path=selected)
             return
 
-        if selected == PANEL_KIND_UNCLASSIFIED:
+        if selected == UNKNOWN_CHOICE_PATH:
             await self._publish_unclassified(state)
+            return
+        if selected == "idle":
+            await self._publish_idle(state)
             return
 
         await self._publish_classified(selected, state)
@@ -225,18 +225,40 @@ class ActivityDaemon:
         now = utcnow()
         await self._close_previous_span(now)
         await self._run_actions(path)
-        top_node, _ = self.runtime.taxonomy.node_for_path(path)
+        choice = self.runtime.choices.choice_for_path(path)
+        top_level = path.split("/", 1)[0]
         panel_state = PanelStateRecord.classified(
             revision=self.runtime.panel_state.revision + 1,
             path=path,
-            top_level_id=path.split("/", 1)[0],
-            top_level_label=path.split("/", 1)[0],
-            icon_name=top_node.icon or "applications-system-symbolic",
+            top_level_id=top_level,
+            top_level_label=top_level,
+            icon_name=choice.icon or "applications-system-symbolic",
             published_at=now,
-            taxonomy_hash=self.runtime.taxonomy_hash,
+            choices_hash=self.runtime.choices_hash,
         )
         self.runtime.last_classified_started_at = now
         await self._commit_panel_state(panel_state, state=state, previous=previous)
+
+    async def _publish_idle(self, state) -> None:
+        previous = self._current_selection()
+        now = utcnow()
+        await self._close_previous_span(now)
+        panel_state = PanelStateRecord.classified(
+            revision=self.runtime.panel_state.revision + 1,
+            path="idle",
+            top_level_id="idle",
+            top_level_label="idle",
+            icon_name=IDLE_ICON,
+            published_at=now,
+            choices_hash=self.runtime.choices_hash,
+        )
+        self.runtime.last_classified_started_at = now
+        await self._commit_panel_state(
+            panel_state,
+            state=state,
+            previous=previous,
+            reason="idle",
+        )
 
     async def _publish_unclassified(self, state, *, reason: str | None = None) -> None:
         previous = self._current_selection()
@@ -246,15 +268,13 @@ class ActivityDaemon:
         panel_state = PanelStateRecord.unclassified(
             revision=self.runtime.panel_state.revision + 1,
             published_at=now,
-            taxonomy_hash=self.runtime.taxonomy_hash,
+            choices_hash=self.runtime.choices_hash,
         )
         await self._commit_panel_state(
             panel_state, state=state, previous=previous, reason=reason
         )
 
     async def _publish_disconnected(self, *, reason: str | None = None) -> None:
-        if self.runtime.panel_state.kind == PANEL_KIND_DISCONNECTED:
-            return
         previous = self._current_selection()
         now = utcnow()
         await self._close_previous_span(now)
@@ -262,12 +282,11 @@ class ActivityDaemon:
         panel_state = PanelStateRecord.disconnected(
             revision=self.runtime.panel_state.revision + 1,
             published_at=now,
+            choices_hash=self.runtime.choices_hash,
         )
         await self._commit_panel_state(panel_state, previous=previous, reason=reason)
 
     async def _publish_paused(self) -> None:
-        if self.runtime.panel_state.kind == PANEL_KIND_PAUSED:
-            return
         previous = self._current_selection()
         now = utcnow()
         await self._close_previous_span(now)
@@ -275,6 +294,7 @@ class ActivityDaemon:
         panel_state = PanelStateRecord.paused(
             revision=self.runtime.panel_state.revision + 1,
             published_at=now,
+            choices_hash=self.runtime.choices_hash,
         )
         await self._commit_panel_state(
             panel_state, previous=previous, reason="tracking_paused"
@@ -291,14 +311,16 @@ class ActivityDaemon:
         if panel_state.same_value(self.runtime.panel_state):
             return
         self.runtime.panel_state = panel_state
-        save_status(self.paths.status_json, panel_state)
+        ui_state = self._build_ui_state()
+        save_ui_state(self.paths.status_json, ui_state)
         self.dbus_service.update_panel_state(panel_state)
+        self.dbus_service.update_ui_state(ui_state)
         self.debug.log(
             "activity_changed",
             previous_path=previous,
             selected_path=self._current_selection(),
             kind=panel_state.kind,
-            taxonomy_hash=panel_state.taxonomy_hash,
+            choices_hash=panel_state.choices_hash,
             reason=reason,
         )
         append_jsonl(
@@ -309,7 +331,7 @@ class ActivityDaemon:
                 "kind": panel_state.kind,
                 "path": panel_state.path,
                 "top_level": panel_state.top_level_id,
-                "taxonomy_hash": panel_state.taxonomy_hash,
+                "choices_hash": panel_state.choices_hash,
                 "title": state.focused_window.title
                 if state and state.focused_window
                 else "",
@@ -320,14 +342,84 @@ class ActivityDaemon:
             },
         )
 
-    async def _reconcile_panel_state_after_taxonomy_refresh(self) -> None:
+    def _publish_ui_state(self) -> None:
+        ui_state = self._build_ui_state()
+        save_ui_state(self.paths.status_json, ui_state)
+        self.dbus_service.update_ui_state(ui_state)
+
+    def _build_ui_state(self) -> UIStateRecord:
+        return UIStateRecord.from_panel_state(
+            self.runtime.panel_state,
+            tracking_enabled=self.runtime.tracking_enabled,
+            display_label=self._display_label_for_state(),
+            display_rows=self._build_display_rows(),
+        )
+
+    def _display_label_for_state(self) -> str:
+        current = self.runtime.panel_state
+        if current.kind == PANEL_KIND_CLASSIFIED and current.path:
+            return current.path
+        if current.kind == PANEL_KIND_UNCLASSIFIED:
+            return UNKNOWN_CHOICE_PATH
+        if current.kind == PANEL_KIND_PAUSED:
+            return PANEL_KIND_PAUSED
+        return PANEL_KIND_DISCONNECTED
+
+    def _build_display_rows(self) -> list[DisplayRow]:
+        durations = self._today_duration_by_path()
+        current_path = self.runtime.panel_state.path
+        rows: list[DisplayRow] = []
+
+        for choice in self.runtime.choices.choices:
+            seconds = durations.pop(choice.path, 0.0)
+            rows.append(
+                DisplayRow(
+                    path=choice.path,
+                    label=choice.path,
+                    icon_name=choice.icon,
+                    seconds=seconds,
+                    is_selected=current_path == choice.path,
+                    is_legacy=False,
+                )
+            )
+
+        for path in sorted(durations, key=lambda item: (-durations[item], item)):
+            rows.append(
+                DisplayRow(
+                    path=path,
+                    label=path,
+                    icon_name="applications-system-symbolic",
+                    seconds=durations[path],
+                    is_selected=current_path == path,
+                    is_legacy=True,
+                )
+            )
+        return rows
+
+    def _today_duration_by_path(self) -> dict[str, float]:
+        spans = load_spans(self.paths.spans_log)
+        day_start = datetime.now(tz=UTC).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        totals: dict[str, float] = {}
+        for span in spans:
+            if span.ended_at < day_start:
+                continue
+            totals[span.path] = totals.get(span.path, 0.0) + span.duration_seconds
+        return totals
+
+    async def _reconcile_panel_state_after_reload(self) -> None:
         current = self.runtime.panel_state
         if current.kind != PANEL_KIND_CLASSIFIED or current.path is None:
             return
-        if current.path in self.runtime.taxonomy.allowed_paths():
+        if current.path == "idle" or current.path in self.runtime.choices.allowed_paths():
+            self.runtime.panel_state = current.model_copy(
+                update={"choices_hash": self.runtime.choices_hash}
+            )
+            self.dbus_service.update_panel_state(self.runtime.panel_state)
             return
         await self._publish_unclassified(
-            state=None, reason="path_removed_from_taxonomy"
+            state=None, reason="path_removed_from_choices"
         )
 
     def _log_raw_event(self, snapshot: ProviderSnapshot) -> None:
@@ -388,21 +480,13 @@ class ActivityDaemon:
             "screen_locked": snapshot.state.screen_locked,
             "idle_time_seconds": snapshot.state.idle_time_seconds,
             "previous_selection": previous_selection,
-            "taxonomy_hash": self.runtime.taxonomy_hash,
+            "choices_hash": self.runtime.choices_hash,
         }
         serialized = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
-    def _context_output_for_prompt(self, result) -> str:
-        if result.returncode != 0:
-            return "<unavailable>"
-        stdout = result.stdout.strip()
-        if stdout:
-            return stdout
-        return "<empty>"
-
     async def _run_actions(self, path: str) -> None:
-        calls = self.runtime.taxonomy.tools_for_path(path)
+        calls = self.runtime.choices.actions_for_path(path)
         self.debug.log(
             "action_dispatch",
             path=path,
@@ -438,7 +522,7 @@ class ActivityDaemon:
         if current.kind == PANEL_KIND_CLASSIFIED:
             return current.path
         if current.kind == PANEL_KIND_UNCLASSIFIED:
-            return PANEL_KIND_UNCLASSIFIED
+            return UNKNOWN_CHOICE_PATH
         return None
 
     def _previous_selection(self) -> str | None:
@@ -446,11 +530,36 @@ class ActivityDaemon:
         if current.kind == PANEL_KIND_CLASSIFIED:
             return current.path
         if current.kind == PANEL_KIND_UNCLASSIFIED:
-            return PANEL_KIND_UNCLASSIFIED
+            return UNKNOWN_CHOICE_PATH
         return None
 
     async def status_payload(self) -> dict[str, Any]:
-        return {
-            **self.runtime.panel_state.payload(),
-            "revision": self.runtime.panel_state.revision,
-        }
+        return self._build_ui_state().model_dump(mode="json")
+
+
+def describe_choice_reload(
+    previous_paths: set[str],
+    current_paths: set[str],
+    choices_hash: str,
+) -> str:
+    added = sorted(current_paths - previous_paths)
+    removed = sorted(previous_paths - current_paths)
+    message = f"Loaded {len(current_paths)} choices"
+    if not added and not removed:
+        return f"{message} (unchanged, hash={choices_hash[:8]})"
+
+    parts = [f"hash={choices_hash[:8]}"]
+    if added:
+        parts.append("added: " + summarize_paths(added))
+    if removed:
+        parts.append("removed: " + summarize_paths(removed))
+    return f"{message} ({'; '.join(parts)})"
+
+
+def summarize_paths(paths: list[str], *, limit: int = 5) -> str:
+    if not paths:
+        return "none"
+    if len(paths) <= limit:
+        return ", ".join(paths)
+    visible = ", ".join(paths[:limit])
+    return f"{visible}, +{len(paths) - limit} more"

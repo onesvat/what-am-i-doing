@@ -3,5 +3,6 @@
   "name": "waid",
   "description": "Expose GNOME desktop state over D-Bus and show current waid activity status.",
   "shell-version": ["49"],
-  "url": "https://github.com/onesvat/what-am-i-doing"
+  "url": "https://github.com/onesvat/what-am-i-doing",
+  "version-name": "0.4.0"
 }

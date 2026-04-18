@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .constants import (
     DISCONNECTED_ICON,
@@ -17,6 +17,7 @@ from .constants import (
     PANEL_KIND_UNCLASSIFIED,
     PANEL_SCHEMA_VERSION,
     PAUSED_ICON,
+    RESERVED_CHOICE_PATHS,
     STATE_DIR,
     UNCLASSIFIED_ICON,
 )
@@ -36,93 +37,60 @@ class ToolCall(BaseModel):
     args: list[str] = Field(default_factory=list)
 
 
-class TaxonomyNode(BaseModel):
+class ChoiceDefinition(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    name: str
-    description: str
+    path: str
+    description: str = ""
     icon: str | None = None
-    tool_calls: list[ToolCall] = Field(default_factory=list)
-    children: list["TaxonomyNode"] = Field(default_factory=list)
+    actions: list[ToolCall] = Field(default_factory=list)
 
-    @model_validator(mode="after")
-    def validate_name_and_children(self) -> "TaxonomyNode":
-        if not self.name:
-            raise ValueError("category names must be non-empty")
-        if self.name.startswith("/") or self.name.endswith("/"):
-            raise ValueError("category names cannot start or end with '/'")
-        parts = self.name.split("/")
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("choice paths must be non-empty")
+        if value.startswith("/") or value.endswith("/"):
+            raise ValueError("choice paths cannot start or end with '/'")
+        parts = value.split("/")
         for part in parts:
             if not part:
-                raise ValueError("category path parts cannot be empty")
-        names = [child.name for child in self.children]
-        if len(names) != len(set(names)):
-            raise ValueError(f"duplicate child names under {self.name}")
-        return self
+                raise ValueError("choice path parts cannot be empty")
+            if part in RESERVED_CHOICE_PATHS:
+                raise ValueError(f"choice path is reserved: {part}")
+        return value
 
 
-class Taxonomy(BaseModel):
+class ChoiceRegistry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    categories: list[TaxonomyNode]
+    choices: list[ChoiceDefinition] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def validate_unique_roots(self) -> "Taxonomy":
-        names = [node.name for node in self.categories]
-        if len(names) != len(set(names)):
-            raise ValueError("duplicate top-level categories")
+    def validate_unique_paths(self) -> "ChoiceRegistry":
+        paths = [choice.path for choice in self.choices]
+        if len(paths) != len(set(paths)):
+            raise ValueError("choice paths must be unique")
         return self
 
     def allowed_paths(self) -> set[str]:
-        result: set[str] = set()
-        for node in self.categories:
-            if not node.children:
-                result.add(node.name)
-            for child in node.children:
-                result.add(f"{node.name}/{child.name}")
-        return result
+        return {choice.path for choice in self.choices}
 
-    def top_level(self, path: str) -> str:
-        return path.split("/", 1)[0]
-
-    def node_for_path(self, path: str) -> tuple[TaxonomyNode, TaxonomyNode | None]:
-        top, _, child = path.partition("/")
-        for node in self.categories:
-            if node.name != top:
-                continue
-            if not child:
-                return node, None
-            for subnode in node.children:
-                if subnode.name == child:
-                    return node, subnode
+    def choice_for_path(self, path: str) -> ChoiceDefinition:
+        for choice in self.choices:
+            if choice.path == path:
+                return choice
         raise KeyError(path)
 
-    def tools_for_path(self, path: str) -> list[ToolCall]:
-        top, child = self.node_for_path(path)
-        if child is not None:
-            return list(child.tool_calls)
-        return list(top.tool_calls)
+    def actions_for_path(self, path: str) -> list[ToolCall]:
+        return list(self.choice_for_path(path).actions)
 
     def describe(self) -> str:
-        lines: list[str] = []
-        for node in self.categories:
-            lines.append(f"- {node.name}: {node.description}")
-            for child in node.children:
-                lines.append(f"  - {node.name}/{child.name}: {child.description}")
-        return "\n".join(lines)
-
-    def filter_unknown_action_tools(self, known_tools: set[str]) -> None:
-        for node in self.categories:
-            self._filter_node_tools(node, known_tools)
-
-    def _filter_node_tools(self, node: TaxonomyNode, known_tools: set[str]) -> None:
-        valid_calls = []
-        for call in node.tool_calls:
-            if call.tool in known_tools:
-                valid_calls.append(call)
-        node.tool_calls = valid_calls
-        for child in node.children:
-            self._filter_node_tools(child, known_tools)
+        return "\n".join(
+            f"- {choice.path}: {choice.description or 'No description.'}"
+            for choice in self.choices
+        )
 
     def fingerprint(self) -> str:
         payload = self.model_dump(mode="json", exclude_none=True)
@@ -185,7 +153,7 @@ class PanelStateRecord(BaseModel):
     icon_name: str
     path: str | None = None
     published_at: datetime
-    taxonomy_hash: str | None = None
+    choices_hash: str | None = None
 
     @model_validator(mode="after")
     def validate_shape(self) -> "PanelStateRecord":
@@ -194,25 +162,17 @@ class PanelStateRecord(BaseModel):
                 f"unsupported panel state schema version: {self.schema_version}"
             )
         if self.kind == PANEL_KIND_CLASSIFIED:
-            if (
-                not self.top_level_id
-                or not self.top_level_label
-                or not self.path
-                or not self.taxonomy_hash
-            ):
+            if not self.top_level_id or not self.top_level_label or not self.path:
                 raise ValueError(
-                    "classified panel state must include top-level, path, and taxonomy hash"
+                    "classified panel state must include top-level and path"
                 )
-        else:
-            if self.path is not None:
-                raise ValueError("non-classified panel state cannot include a path")
-            if (
-                self.kind in (PANEL_KIND_DISCONNECTED, PANEL_KIND_PAUSED)
-                and self.taxonomy_hash is not None
-            ):
-                raise ValueError(
-                    "disconnected/paused panel state cannot include taxonomy hash"
-                )
+            return self
+        if self.path is not None:
+            raise ValueError("non-classified panel state cannot include a path")
+        if self.top_level_id is not None or self.top_level_label is not None:
+            raise ValueError(
+                "non-classified panel state cannot include top-level metadata"
+            )
         return self
 
     @classmethod
@@ -225,7 +185,7 @@ class PanelStateRecord(BaseModel):
         top_level_label: str,
         icon_name: str,
         published_at: datetime,
-        taxonomy_hash: str,
+        choices_hash: str | None,
     ) -> "PanelStateRecord":
         return cls(
             revision=revision,
@@ -235,7 +195,7 @@ class PanelStateRecord(BaseModel):
             icon_name=icon_name,
             path=path,
             published_at=published_at,
-            taxonomy_hash=taxonomy_hash,
+            choices_hash=choices_hash,
         )
 
     @classmethod
@@ -244,7 +204,7 @@ class PanelStateRecord(BaseModel):
         *,
         revision: int,
         published_at: datetime,
-        taxonomy_hash: str | None,
+        choices_hash: str | None,
     ) -> "PanelStateRecord":
         return cls(
             revision=revision,
@@ -254,7 +214,7 @@ class PanelStateRecord(BaseModel):
             icon_name=UNCLASSIFIED_ICON,
             path=None,
             published_at=published_at,
-            taxonomy_hash=taxonomy_hash,
+            choices_hash=choices_hash,
         )
 
     @classmethod
@@ -263,6 +223,7 @@ class PanelStateRecord(BaseModel):
         *,
         revision: int,
         published_at: datetime,
+        choices_hash: str | None = None,
     ) -> "PanelStateRecord":
         return cls(
             revision=revision,
@@ -272,7 +233,7 @@ class PanelStateRecord(BaseModel):
             icon_name=DISCONNECTED_ICON,
             path=None,
             published_at=published_at,
-            taxonomy_hash=None,
+            choices_hash=choices_hash,
         )
 
     @classmethod
@@ -281,6 +242,7 @@ class PanelStateRecord(BaseModel):
         *,
         revision: int,
         published_at: datetime,
+        choices_hash: str | None = None,
     ) -> "PanelStateRecord":
         return cls(
             revision=revision,
@@ -290,7 +252,7 @@ class PanelStateRecord(BaseModel):
             icon_name=PAUSED_ICON,
             path=None,
             published_at=published_at,
-            taxonomy_hash=None,
+            choices_hash=choices_hash,
         )
 
     def payload(self) -> dict[str, Any]:
@@ -305,6 +267,83 @@ class PanelStateRecord(BaseModel):
         left = self.model_dump(mode="json", exclude={"revision", "published_at"})
         right = other.model_dump(mode="json", exclude={"revision", "published_at"})
         return left == right
+
+
+class DisplayRow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    label: str
+    icon_name: str | None = None
+    seconds: float = 0.0
+    is_selected: bool = False
+    is_legacy: bool = False
+
+
+class UIStateRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    revision: int = 0
+    schema_version: int = PANEL_SCHEMA_VERSION
+    kind: Literal[
+        PANEL_KIND_CLASSIFIED,
+        PANEL_KIND_UNCLASSIFIED,
+        PANEL_KIND_DISCONNECTED,
+        PANEL_KIND_PAUSED,
+    ]
+    top_level_id: str | None = None
+    top_level_label: str | None = None
+    icon_name: str
+    path: str | None = None
+    published_at: datetime
+    choices_hash: str | None = None
+    tracking_enabled: bool = True
+    display_label: str
+    display_rows: list[DisplayRow] = Field(default_factory=list)
+
+    @classmethod
+    def from_panel_state(
+        cls,
+        panel_state: PanelStateRecord,
+        *,
+        tracking_enabled: bool,
+        display_label: str,
+        display_rows: list[DisplayRow],
+    ) -> "UIStateRecord":
+        return cls(
+            revision=panel_state.revision,
+            kind=panel_state.kind,
+            top_level_id=panel_state.top_level_id,
+            top_level_label=panel_state.top_level_label,
+            icon_name=panel_state.icon_name,
+            path=panel_state.path,
+            published_at=panel_state.published_at,
+            choices_hash=panel_state.choices_hash,
+            tracking_enabled=tracking_enabled,
+            display_label=display_label,
+            display_rows=display_rows,
+        )
+
+    def to_panel_state(self) -> PanelStateRecord:
+        return PanelStateRecord.model_validate(
+            self.model_dump(
+                mode="python",
+                include={
+                    "revision",
+                    "schema_version",
+                    "kind",
+                    "top_level_id",
+                    "top_level_label",
+                    "icon_name",
+                    "path",
+                    "published_at",
+                    "choices_hash",
+                },
+            )
+        )
+
+    def payload_json(self) -> str:
+        return self.model_dump_json(indent=2)
 
 
 class SpanRecord(BaseModel):
@@ -323,7 +362,6 @@ class AppPaths:
     raw_events_log: Path
     activity_log: Path
     debug_log: Path
-    taxonomy_json: Path
     status_json: Path
     spans_log: Path
     tracking_json: Path
@@ -339,7 +377,6 @@ class AppPaths:
             raw_events_log=state_dir / "raw-events.jsonl",
             activity_log=state_dir / "activity.jsonl",
             debug_log=state_dir / "debug.jsonl",
-            taxonomy_json=state_dir / "taxonomy.json",
             status_json=state_dir / "status.json",
             spans_log=state_dir / "spans.jsonl",
             tracking_json=state_dir / "tracking.json",
