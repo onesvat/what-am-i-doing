@@ -12,7 +12,13 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from what_am_i_doing.dbus_service import DaemonInterface, _disconnect_bus
-from what_am_i_doing.models import DisplayRow, PanelStateRecord, RefreshResult, UIStateRecord, utcnow
+from what_am_i_doing.models import (
+    DisplayRow,
+    PanelStateRecord,
+    RefreshResult,
+    UIStateRecord,
+    utcnow,
+)
 
 
 async def _noop_reload() -> RefreshResult:
@@ -31,7 +37,7 @@ class DBusServiceTest(unittest.IsolatedAsyncioTestCase):
         initial = PanelStateRecord.disconnected(
             revision=0,
             published_at=utcnow(),
-            choices_hash="hash-0",
+            catalog_hash="hash-0",
         )
         initial_ui = UIStateRecord.from_panel_state(
             initial,
@@ -50,8 +56,9 @@ class DBusServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(0, interface.PanelRevision)
         self.assertEqual("disconnected", interface.PanelKind)
         self.assertEqual("", interface.PanelPath)
+        self.assertEqual("", interface.PanelTaskPath)
         self.assertEqual("network-offline-symbolic", interface.PanelIconName)
-        self.assertEqual("hash-0", interface.PanelChoicesHash)
+        self.assertEqual("hash-0", interface.PanelCatalogHash)
 
         updated = PanelStateRecord.classified(
             revision=7,
@@ -60,23 +67,25 @@ class DBusServiceTest(unittest.IsolatedAsyncioTestCase):
             top_level_label="work",
             icon_name="laptop-symbolic",
             published_at=utcnow(),
-            choices_hash="abc123",
+            catalog_hash="abc123",
+            task_path="project-a",
         )
         interface.update_panel_state(updated)
 
         self.assertEqual(7, interface.PanelRevision)
         self.assertEqual("classified", interface.PanelKind)
         self.assertEqual("work/project-a", interface.PanelPath)
+        self.assertEqual("project-a", interface.PanelTaskPath)
         self.assertEqual("work", interface.PanelTopLevelId)
         self.assertEqual("work", interface.PanelTopLevelLabel)
         self.assertEqual("laptop-symbolic", interface.PanelIconName)
-        self.assertEqual("abc123", interface.PanelChoicesHash)
+        self.assertEqual("abc123", interface.PanelCatalogHash)
 
     def test_get_ui_state_returns_current_payload(self) -> None:
         panel_state = PanelStateRecord.unclassified(
             revision=2,
             published_at=utcnow(),
-            choices_hash="hash-1",
+            catalog_hash="hash-1",
         )
         ui_state = UIStateRecord.from_panel_state(
             panel_state,
@@ -102,14 +111,15 @@ class DBusServiceTest(unittest.IsolatedAsyncioTestCase):
         payload = json.loads(interface._ui_state_json)
 
         self.assertEqual("unknown", payload["display_label"])
-        self.assertEqual("hash-1", payload["choices_hash"])
+        self.assertEqual("hash-1", payload["catalog_hash"])
         self.assertEqual("work/project-a", payload["display_rows"][0]["path"])
+        self.assertIsNone(payload["task_path"])
 
-    def test_legacy_status_json_uses_choices_hash(self) -> None:
+    def test_legacy_status_json_uses_catalog_hash(self) -> None:
         panel_state = PanelStateRecord.unclassified(
             revision=2,
             published_at=utcnow(),
-            choices_hash="hash-1",
+            catalog_hash="hash-1",
         )
         ui_state = UIStateRecord.from_panel_state(
             panel_state,
@@ -127,9 +137,10 @@ class DBusServiceTest(unittest.IsolatedAsyncioTestCase):
 
         payload = json.loads(interface._legacy_status_json)
         self.assertEqual("unclassified", payload["current_path"])
+        self.assertIsNone(payload["task_path"])
         self.assertEqual("unclassified", payload["top_level"])
         self.assertEqual("help-about-symbolic", payload["icon"])
-        self.assertEqual("hash-1", payload["choices_hash"])
+        self.assertEqual("hash-1", payload["catalog_hash"])
 
     async def test_disconnect_bus_waits_for_actual_disconnect(self) -> None:
         bus = Mock()

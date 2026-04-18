@@ -57,6 +57,10 @@ class DaemonInterface(ServiceInterface):
         return self._panel_top_level_label
 
     @dbus_property(access=PropertyAccess.READ)
+    def PanelTaskPath(self) -> "s":
+        return self._panel_task_path
+
+    @dbus_property(access=PropertyAccess.READ)
     def PanelIconName(self) -> "s":
         return self._panel_icon_name
 
@@ -65,8 +69,8 @@ class DaemonInterface(ServiceInterface):
         return self._panel_published_at
 
     @dbus_property(access=PropertyAccess.READ)
-    def PanelChoicesHash(self) -> "s":
-        return self._panel_choices_hash
+    def PanelCatalogHash(self) -> "s":
+        return self._panel_catalog_hash
 
     @dbus_property(access=PropertyAccess.READ)
     def TrackingEnabled(self) -> "b":
@@ -123,9 +127,10 @@ class DaemonInterface(ServiceInterface):
                 "PanelPath": self._panel_path,
                 "PanelTopLevelId": self._panel_top_level_id,
                 "PanelTopLevelLabel": self._panel_top_level_label,
+                "PanelTaskPath": self._panel_task_path,
                 "PanelIconName": self._panel_icon_name,
                 "PanelPublishedAt": self._panel_published_at,
-                "PanelChoicesHash": self._panel_choices_hash,
+                "PanelCatalogHash": self._panel_catalog_hash,
             }
         )
         self.PanelStateChanged(panel_state.revision, self._panel_state_json)
@@ -145,17 +150,19 @@ class DaemonInterface(ServiceInterface):
         self._panel_path = panel_state.path or ""
         self._panel_top_level_id = panel_state.top_level_id or ""
         self._panel_top_level_label = panel_state.top_level_label or ""
+        self._panel_task_path = panel_state.task_path or ""
         self._panel_icon_name = panel_state.icon_name
         self._panel_published_at = panel_state.published_at.isoformat()
-        self._panel_choices_hash = panel_state.choices_hash or ""
+        self._panel_catalog_hash = panel_state.catalog_hash or ""
 
     def _build_legacy_status_json(self, panel_state: PanelStateRecord) -> str:
         payload = {
             "current_path": panel_state.path or panel_state.kind,
+            "task_path": panel_state.task_path,
             "top_level": panel_state.top_level_label or panel_state.kind,
             "icon": panel_state.icon_name,
             "updated_at": panel_state.published_at.isoformat(),
-            "choices_hash": panel_state.choices_hash,
+            "catalog_hash": panel_state.catalog_hash,
         }
         return json.dumps(payload, sort_keys=True)
 

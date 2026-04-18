@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .constants import PANEL_KIND_CLASSIFIED, UNKNOWN_CHOICE_PATH
+from .constants import PANEL_KIND_CLASSIFIED, UNKNOWN_PATH
 from .models import AppPaths, PanelStateRecord, SpanRecord, UIStateRecord, utcnow
 
 
@@ -26,6 +26,7 @@ def load_ui_state(path: Path) -> UIStateRecord | None:
         raw = json.loads(handle.read())
     if not isinstance(raw, dict):
         return None
+    raw = _normalize_catalog_keys(raw)
     if "display_rows" in raw or "display_label" in raw or "tracking_enabled" in raw:
         return UIStateRecord.model_validate(raw)
 
@@ -51,9 +52,17 @@ def load_status(path: Path) -> PanelStateRecord | None:
         raw = json.loads(handle.read())
     if not isinstance(raw, dict):
         return None
+    raw = _normalize_catalog_keys(raw)
     if "display_rows" in raw or "display_label" in raw or "tracking_enabled" in raw:
         return UIStateRecord.model_validate(raw).to_panel_state()
     return _panel_state_from_raw(raw)
+
+
+def _normalize_catalog_keys(raw: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(raw)
+    if "catalog_hash" not in normalized and "choices_hash" in normalized:
+        normalized["catalog_hash"] = normalized["choices_hash"]
+    return normalized
 
 
 def _panel_state_from_raw(raw: dict[str, Any]) -> PanelStateRecord | None:
@@ -65,22 +74,26 @@ def _panel_state_from_raw(raw: dict[str, Any]) -> PanelStateRecord | None:
         parse_timestamp(updated_at) if isinstance(updated_at, str) else utcnow()
     )
     current_path = raw.get("current_path")
-    choices_hash = raw.get("choices_hash")
-    if current_path and current_path != UNKNOWN_CHOICE_PATH:
+    task_path = raw.get("task_path")
+    catalog_hash = raw.get("catalog_hash")
+    if catalog_hash is None and "choices_hash" in raw:
+        catalog_hash = raw.get("choices_hash")
+    if current_path and current_path != UNKNOWN_PATH:
         top_level = raw.get("top_level") or str(current_path).split("/", 1)[0]
         return PanelStateRecord.classified(
             revision=int(raw.get("revision", 0)),
             path=str(current_path),
+            task_path=str(task_path) if isinstance(task_path, str) and task_path else None,
             top_level_id=str(top_level),
             top_level_label=str(top_level),
             icon_name=raw.get("icon") or "applications-system-symbolic",
             published_at=published_at,
-            choices_hash=choices_hash or "legacy",
+            catalog_hash=catalog_hash or "legacy",
         )
     return PanelStateRecord.unclassified(
         revision=int(raw.get("revision", 0)),
         published_at=published_at,
-        choices_hash=choices_hash,
+        catalog_hash=catalog_hash,
     )
 
 

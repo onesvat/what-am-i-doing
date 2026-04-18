@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 import yaml
 
-from .constants import CONFIG_PATH, STATE_DIR
-from .models import ChoiceDefinition, ChoiceRegistry, ToolCall
+from .activity_catalog import builtin_activity_entries
+from .constants import CONFIG_PATH, STATE_DIR, TASKS_PATH
+from .models import CatalogEntry, SelectionCatalog
 
 
 class ModelConfig(BaseModel):
@@ -54,7 +54,9 @@ class AppConfig(BaseModel):
     version: int = 2
     model: ModelConfig
     classifier: ClassifierConfig
-    choices: list[ChoiceDefinition] = Field(default_factory=list)
+    activities: list[CatalogEntry] = Field(default_factory=list)
+    allow_activities: list[str] = Field(default_factory=list)
+    block_activities: list[str] = Field(default_factory=list)
     tools: ToolRegistry = Field(default_factory=ToolRegistry)
     idle_threshold_seconds: int = 60
     classify_idle: bool = True
@@ -63,15 +65,34 @@ class AppConfig(BaseModel):
     def validate_config(self) -> "AppConfig":
         if self.version != 2:
             raise ValueError("only config version 2 is supported")
-        paths = [choice.path for choice in self.choices]
-        if len(paths) != len(set(paths)):
-            raise ValueError("choice paths must be unique")
+
+        builtin_paths = {entry.path for entry in builtin_activity_entries()}
+        allow = set(self.allow_activities)
+        block = set(self.block_activities)
+        overlap = sorted(allow & block)
+        if overlap:
+            raise ValueError(
+                "activity allow/block overlap is invalid: " + ", ".join(overlap)
+            )
+        unknown_filters = sorted((allow | block) - builtin_paths)
+        if unknown_filters:
+            raise ValueError(
+                "unknown built-in activity ids: " + ", ".join(unknown_filters)
+            )
+
+        custom_paths = [entry.path for entry in self.activities]
+        colliding = sorted(set(custom_paths) & builtin_paths)
+        if colliding:
+            raise ValueError(
+                "custom activities cannot override built-ins: " + ", ".join(colliding)
+            )
+
         known_tools = set(self.tools.actions)
-        for choice in self.choices:
-            for action in choice.actions:
+        for entry in self.activities:
+            for action in entry.actions:
                 if action.tool not in known_tools:
                     raise ValueError(
-                        f"choice action references unknown tool: {action.tool}"
+                        f"entry action references unknown tool: {action.tool}"
                     )
         return self
 
@@ -83,14 +104,23 @@ class AppConfig(BaseModel):
     def state_dir(self) -> Path:
         return STATE_DIR
 
-    def choice_registry(self) -> ChoiceRegistry:
-        return ChoiceRegistry(
-            choices=[
-                ChoiceDefinition.model_validate(
-                    choice.model_dump(mode="python", exclude_none=True)
+    def activity_catalog(self) -> SelectionCatalog:
+        builtin = builtin_activity_entries()
+        allow = set(self.allow_activities)
+        block = set(self.block_activities)
+        enabled_builtin = [
+            entry
+            for entry in builtin
+            if (not allow or entry.path in allow) and entry.path not in block
+        ]
+        return SelectionCatalog(
+            activity_entries=enabled_builtin
+            + [
+                CatalogEntry.model_validate(
+                    entry.model_dump(mode="python", exclude_none=True)
                 )
-                for choice in self.choices
-            ]
+                for entry in self.activities
+            ],
         )
 
     def render_classifier_instructions(self) -> str:
@@ -101,67 +131,58 @@ def default_config_path() -> Path:
     return CONFIG_PATH
 
 
+def default_tasks_path() -> Path:
+    return TASKS_PATH
+
+
 def load_config(path: str | Path | None = None) -> AppConfig:
     config_path = Path(path).expanduser() if path else default_config_path()
     with config_path.open("r", encoding="utf-8") as handle:
         raw = yaml.safe_load(handle) or {}
     if not isinstance(raw, dict):
         raise ValueError("config root must be a mapping")
-    raw = resolve_choice_imports(raw, config_path.parent)
     return AppConfig.model_validate(raw)
 
 
-def resolve_choice_imports(raw: dict[str, Any], config_dir: Path) -> dict[str, Any]:
-    raw = dict(raw)
-    choices = raw.get("choices")
-    if choices is None:
-        raw["choices"] = []
-        return raw
-    if not isinstance(choices, list):
-        raise ValueError("choices must be a list")
-    raw["choices"] = _resolve_choice_items(choices, config_dir, seen_files=())
-    return raw
+def load_tasks(path: str | Path | None = None) -> list[CatalogEntry]:
+    tasks_path = Path(path).expanduser() if path else default_tasks_path()
+    if not tasks_path.exists():
+        return []
+    with tasks_path.open("r", encoding="utf-8") as handle:
+        raw = yaml.safe_load(handle) or []
+    if not isinstance(raw, list):
+        raise ValueError("tasks root must be a list")
+    entries = [CatalogEntry.model_validate(item) for item in raw]
+    paths = [entry.path for entry in entries]
+    if len(paths) != len(set(paths)):
+        raise ValueError("task paths must be unique")
+    return entries
 
 
-def _resolve_choice_items(
-    items: list[Any], config_dir: Path, *, seen_files: tuple[Path, ...]
-) -> list[dict[str, Any]]:
-    resolved: list[dict[str, Any]] = []
-    for item in items:
-        if not isinstance(item, dict):
-            raise ValueError("choices entries must be mappings")
-        if "import" in item:
-            import_path = _resolve_import_path(str(item["import"]), config_dir)
-            if import_path in seen_files:
-                raise ValueError(f"choice import loop detected: {import_path}")
-            resolved.extend(
-                _load_imported_choices(import_path, seen_files=seen_files + (import_path,))
-            )
-            continue
-        resolved.append(item)
-    return resolved
+def build_selection_catalog(
+    config: AppConfig,
+    tasks: list[CatalogEntry] | None = None,
+) -> SelectionCatalog:
+    task_entries = tasks or []
+    catalog = config.activity_catalog()
+    combined_paths = catalog.activity_paths() | {entry.path for entry in task_entries}
+    if len(combined_paths) != len(catalog.activity_paths()) + len(task_entries):
+        raise ValueError("activity and task paths must be unique")
+    known_tools = set(config.tools.actions)
+    for entry in task_entries:
+        for action in entry.actions:
+            if action.tool not in known_tools:
+                raise ValueError(f"entry action references unknown tool: {action.tool}")
+    return SelectionCatalog(
+        activity_entries=catalog.activity_entries,
+        task_entries=[
+            CatalogEntry.model_validate(entry.model_dump(mode="python", exclude_none=True))
+            for entry in task_entries
+        ],
+    )
 
 
-def _load_imported_choices(
-    path: Path, *, seen_files: tuple[Path, ...]
-) -> list[dict[str, Any]]:
-    if not path.exists():
-        raise FileNotFoundError(f"choice import not found: {path}")
-    with path.open("r", encoding="utf-8") as handle:
-        imported = yaml.safe_load(handle) or []
-    if not isinstance(imported, list):
-        raise ValueError(f"choice import must contain a list: {path}")
-    return _resolve_choice_items(imported, path.parent, seen_files=seen_files)
-
-
-def _resolve_import_path(import_path: str, config_dir: Path) -> Path:
-    path = Path(import_path).expanduser()
-    if not path.is_absolute():
-        path = config_dir / path
-    return path.resolve()
-
-
-def dump_yaml(data: dict[str, Any]) -> str:
+def dump_yaml(data: dict) -> str:
     return yaml.safe_dump(data, sort_keys=False, allow_unicode=False)
 
 
@@ -174,9 +195,10 @@ def render_config(config: AppConfig) -> str:
     payload = config.model_dump(mode="python", exclude_none=True)
     header = (
         "# waid config\n"
-        "# Add direct choices under `choices`, or use `- import: path/to/choices.yaml`.\n"
-        "# Imported files must return the same flat choice shape.\n"
-        "# The classifier must return one configured path or `unknown`.\n\n"
+        "# Built-in activities live in the app.\n"
+        "# Use allow_activities/block_activities to filter built-ins.\n"
+        "# Use activities for custom activity definitions.\n"
+        "# Tasks live in ~/.config/waid/tasks.yaml.\n\n"
     )
     return header + dump_yaml(payload)
 
@@ -198,7 +220,9 @@ def build_minimal_config(
             "classifier": {
                 "instructions": "",
             },
-            "choices": [],
+            "activities": [],
+            "allow_activities": [],
+            "block_activities": [],
             "tools": {"actions": {}},
             "idle_threshold_seconds": 60,
             "classify_idle": True,

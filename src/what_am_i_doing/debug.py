@@ -90,12 +90,12 @@ def format_debug_entry(entry: dict[str, Any]) -> str:
         )
 
     if event == "config_reload_start":
-        choices = entry.get("choices") or []
-        return f"{timestamp} config: reload started with {len(choices)} current choices"
+        catalog = entry.get("catalog") or []
+        return f"{timestamp} config: reload started with {len(catalog)} current catalog entries"
 
     if event == "config_reload_complete":
-        choices = entry.get("choices") or []
-        return f"{timestamp} config: reload complete with {len(choices)} choices"
+        catalog = entry.get("catalog") or []
+        return f"{timestamp} config: reload complete with {len(catalog)} catalog entries"
 
     if event == "config_reload_failed":
         return f"{timestamp} config: reload failed: {entry.get('error', '-')}"
@@ -103,8 +103,8 @@ def format_debug_entry(entry: dict[str, Any]) -> str:
     if event == "classifier_attempt":
         previous = entry.get("previous_path") or "none"
         attempt = entry.get("attempt", 0)
-        allowed = entry.get("allowed") or []
-        return f"{timestamp} classifier: attempt {attempt}, previous={previous}, choices={len(allowed)}"
+        allowed = entry.get("activity_outputs") or []
+        return f"{timestamp} classifier: attempt {attempt}, previous={previous}, activities={len(allowed)}"
 
     if event == "classifier_result":
         attempt = entry.get("attempt", 0)

@@ -15,9 +15,12 @@ from typing import Any
 from dbus_next.errors import DBusError
 
 from .config import (
+    build_selection_catalog,
     build_minimal_config,
     default_config_path,
+    default_tasks_path,
     load_config,
+    load_tasks,
     render_config,
 )
 from .constants import (
@@ -131,7 +134,7 @@ async def _run_refresh(config_path: str, *, local: bool) -> None:
         try:
             success, message = await daemon_reload_config()
             if success:
-                print(f"choices reloaded: {message}")
+                print(f"catalog reloaded: {message}")
             else:
                 print(f"warning: {message}")
             return
@@ -142,7 +145,7 @@ async def _run_refresh(config_path: str, *, local: bool) -> None:
     daemon = ActivityDaemon(config, config_path=resolved)
     result = await daemon.reload_config()
     if result.success:
-        print(f"choices reloaded: {result.message}")
+        print(f"catalog reloaded: {result.message}")
     else:
         print(f"warning: {result.message}")
 
@@ -163,11 +166,12 @@ async def _run_status(json_output: bool) -> None:
             payload = {
                 "kind": "disconnected",
                 "path": None,
+                "task_path": None,
                 "top_level_id": None,
                 "top_level_label": None,
                 "icon_name": DISCONNECTED_ICON,
                 "published_at": None,
-                "choices_hash": None,
+                "catalog_hash": None,
                 "tracking_enabled": True,
                 "display_label": "disconnected",
                 "display_rows": [],
@@ -179,6 +183,7 @@ async def _run_status(json_output: bool) -> None:
         return
     print(f"kind: {payload['kind']}")
     print(f"path: {payload.get('path') or '-'}")
+    print(f"task: {payload.get('task_path') or '-'}")
     print(f"label: {payload.get('display_label') or '-'}")
     print(f"icon: {payload['icon_name']}")
     if payload.get("published_at"):
@@ -212,12 +217,15 @@ def _stats_payload(period: str) -> dict[str, Any]:
 
     by_top: dict[str, float] = {}
     by_path: dict[str, float] = {}
+    by_task: dict[str, float] = {}
     for span in spans:
         if window_start is not None and span.ended_at < window_start:
             continue
         by_top[span.top_level] = by_top.get(span.top_level, 0.0) + span.duration_seconds
         by_path[span.path] = by_path.get(span.path, 0.0) + span.duration_seconds
-    return {"period": period, "by_top": by_top, "by_path": by_path}
+        if span.task_path:
+            by_task[span.task_path] = by_task.get(span.task_path, 0.0) + span.duration_seconds
+    return {"period": period, "by_top": by_top, "by_path": by_path, "by_task": by_task}
 
 
 def _run_stats(json_output: bool, period: str) -> None:
@@ -228,6 +236,7 @@ def _run_stats(json_output: bool, period: str) -> None:
 
     by_top: dict[str, float] = payload["by_top"]
     by_path: dict[str, float] = payload["by_path"]
+    by_task: dict[str, float] = payload["by_task"]
 
     period_label = {
         "today": "Today",
@@ -253,22 +262,25 @@ def _run_stats(json_output: bool, period: str) -> None:
 
     print(f"  {'─' * (col_width + 4)}")
     print(f"  {'Total':<{col_width - 2}}{_format_duration(total):>6}")
+    if by_task:
+        print("\nSP Tasks")
+        for task, secs in sorted(by_task.items(), key=lambda x: x[1], reverse=True):
+            print(f"  {task:<{col_width - 2}}{_format_duration(secs):>6}")
 
 
 def _initial_config_comments() -> str:
     return (
         "\n"
-        "# Example direct choices:\n"
-        "# choices:\n"
-        "#   - path: work/project-a\n"
-        "#     description: Active work on project A\n"
+        "# Built-in activities live in waid itself.\n"
+        "# Use allow_activities/block_activities to filter them.\n"
+        "# Example custom activities:\n"
+        "# activities:\n"
+        "#   - path: custom/project-a\n"
+        "#     description: Active custom activity\n"
         "#     icon: laptop-symbolic\n"
-        "#   - path: browsing/reference\n"
-        "#     description: Generic reading and lookup\n"
         "#\n"
-        "# Example import:\n"
-        "# choices:\n"
-        "#   - import: ~/.config/waid/choices.yaml\n"
+        "# Tasks live in a separate file.\n"
+        f"# Edit {default_tasks_path()} to add generated or hand-written tasks.\n"
         "#\n"
         "# Example action tool:\n"
         "# tools:\n"
@@ -305,7 +317,8 @@ def _run_config_command(args: argparse.Namespace) -> None:
         print(path)
         return
     if args.config_command == "validate":
-        load_config(path)
+        config = load_config(path)
+        build_selection_catalog(config, load_tasks())
         print(f"config ok: {path}")
         return
     if args.config_command == "edit":

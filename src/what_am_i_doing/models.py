@@ -17,7 +17,7 @@ from .constants import (
     PANEL_KIND_UNCLASSIFIED,
     PANEL_SCHEMA_VERSION,
     PAUSED_ICON,
-    RESERVED_CHOICE_PATHS,
+    RESERVED_PATHS,
     STATE_DIR,
     UNCLASSIFIED_ICON,
 )
@@ -37,7 +37,7 @@ class ToolCall(BaseModel):
     args: list[str] = Field(default_factory=list)
 
 
-class ChoiceDefinition(BaseModel):
+class CatalogEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     path: str
@@ -50,46 +50,59 @@ class ChoiceDefinition(BaseModel):
     def validate_path(cls, value: str) -> str:
         value = value.strip()
         if not value:
-            raise ValueError("choice paths must be non-empty")
+            raise ValueError("entry paths must be non-empty")
         if value.startswith("/") or value.endswith("/"):
-            raise ValueError("choice paths cannot start or end with '/'")
+            raise ValueError("entry paths cannot start or end with '/'")
         parts = value.split("/")
         for part in parts:
             if not part:
-                raise ValueError("choice path parts cannot be empty")
-            if part in RESERVED_CHOICE_PATHS:
-                raise ValueError(f"choice path is reserved: {part}")
+                raise ValueError("entry path parts cannot be empty")
+            if part in RESERVED_PATHS:
+                raise ValueError(f"entry path is reserved: {part}")
         return value
 
 
-class ChoiceRegistry(BaseModel):
+class SelectionCatalog(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    choices: list[ChoiceDefinition] = Field(default_factory=list)
+    activity_entries: list[CatalogEntry] = Field(default_factory=list)
+    task_entries: list[CatalogEntry] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def validate_unique_paths(self) -> "ChoiceRegistry":
-        paths = [choice.path for choice in self.choices]
+    def validate_unique_paths(self) -> "SelectionCatalog":
+        paths = [entry.path for entry in self.activity_entries + self.task_entries]
         if len(paths) != len(set(paths)):
-            raise ValueError("choice paths must be unique")
+            raise ValueError("entry paths must be unique")
         return self
 
     def allowed_paths(self) -> set[str]:
-        return {choice.path for choice in self.choices}
+        return self.activity_paths() | self.task_paths()
 
-    def choice_for_path(self, path: str) -> ChoiceDefinition:
-        for choice in self.choices:
-            if choice.path == path:
-                return choice
+    def activity_paths(self) -> set[str]:
+        return {entry.path for entry in self.activity_entries}
+
+    def task_paths(self) -> set[str]:
+        return {entry.path for entry in self.task_entries}
+
+    def entry_for_path(self, path: str) -> CatalogEntry:
+        for entry in self.activity_entries + self.task_entries:
+            if entry.path == path:
+                return entry
         raise KeyError(path)
 
     def actions_for_path(self, path: str) -> list[ToolCall]:
-        return list(self.choice_for_path(path).actions)
+        return list(self.entry_for_path(path).actions)
 
-    def describe(self) -> str:
+    def describe_activities(self) -> str:
         return "\n".join(
-            f"- {choice.path}: {choice.description or 'No description.'}"
-            for choice in self.choices
+            f"- {entry.path}: {entry.description or 'No description.'}"
+            for entry in self.activity_entries
+        )
+
+    def describe_tasks(self) -> str:
+        return "\n".join(
+            f"- {entry.path}: {entry.description or 'No description.'}"
+            for entry in self.task_entries
         )
 
     def fingerprint(self) -> str:
@@ -137,6 +150,13 @@ class ProviderSnapshot:
     state: ProviderState
 
 
+class ClassificationResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    activity_path: str
+    task_path: str | None = None
+
+
 class PanelStateRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -152,8 +172,9 @@ class PanelStateRecord(BaseModel):
     top_level_label: str | None = None
     icon_name: str
     path: str | None = None
+    task_path: str | None = None
     published_at: datetime
-    choices_hash: str | None = None
+    catalog_hash: str | None = None
 
     @model_validator(mode="after")
     def validate_shape(self) -> "PanelStateRecord":
@@ -167,8 +188,8 @@ class PanelStateRecord(BaseModel):
                     "classified panel state must include top-level and path"
                 )
             return self
-        if self.path is not None:
-            raise ValueError("non-classified panel state cannot include a path")
+        if self.path is not None or self.task_path is not None:
+            raise ValueError("non-classified panel state cannot include classified paths")
         if self.top_level_id is not None or self.top_level_label is not None:
             raise ValueError(
                 "non-classified panel state cannot include top-level metadata"
@@ -185,7 +206,8 @@ class PanelStateRecord(BaseModel):
         top_level_label: str,
         icon_name: str,
         published_at: datetime,
-        choices_hash: str | None,
+        catalog_hash: str | None,
+        task_path: str | None = None,
     ) -> "PanelStateRecord":
         return cls(
             revision=revision,
@@ -194,8 +216,9 @@ class PanelStateRecord(BaseModel):
             top_level_label=top_level_label,
             icon_name=icon_name,
             path=path,
+            task_path=task_path,
             published_at=published_at,
-            choices_hash=choices_hash,
+            catalog_hash=catalog_hash,
         )
 
     @classmethod
@@ -204,7 +227,7 @@ class PanelStateRecord(BaseModel):
         *,
         revision: int,
         published_at: datetime,
-        choices_hash: str | None,
+        catalog_hash: str | None,
     ) -> "PanelStateRecord":
         return cls(
             revision=revision,
@@ -214,7 +237,7 @@ class PanelStateRecord(BaseModel):
             icon_name=UNCLASSIFIED_ICON,
             path=None,
             published_at=published_at,
-            choices_hash=choices_hash,
+            catalog_hash=catalog_hash,
         )
 
     @classmethod
@@ -223,7 +246,7 @@ class PanelStateRecord(BaseModel):
         *,
         revision: int,
         published_at: datetime,
-        choices_hash: str | None = None,
+        catalog_hash: str | None = None,
     ) -> "PanelStateRecord":
         return cls(
             revision=revision,
@@ -233,7 +256,7 @@ class PanelStateRecord(BaseModel):
             icon_name=DISCONNECTED_ICON,
             path=None,
             published_at=published_at,
-            choices_hash=choices_hash,
+            catalog_hash=catalog_hash,
         )
 
     @classmethod
@@ -242,7 +265,7 @@ class PanelStateRecord(BaseModel):
         *,
         revision: int,
         published_at: datetime,
-        choices_hash: str | None = None,
+        catalog_hash: str | None = None,
     ) -> "PanelStateRecord":
         return cls(
             revision=revision,
@@ -252,7 +275,7 @@ class PanelStateRecord(BaseModel):
             icon_name=PAUSED_ICON,
             path=None,
             published_at=published_at,
-            choices_hash=choices_hash,
+            catalog_hash=catalog_hash,
         )
 
     def payload(self) -> dict[str, Any]:
@@ -295,8 +318,9 @@ class UIStateRecord(BaseModel):
     top_level_label: str | None = None
     icon_name: str
     path: str | None = None
+    task_path: str | None = None
     published_at: datetime
-    choices_hash: str | None = None
+    catalog_hash: str | None = None
     tracking_enabled: bool = True
     display_label: str
     display_rows: list[DisplayRow] = Field(default_factory=list)
@@ -317,8 +341,9 @@ class UIStateRecord(BaseModel):
             top_level_label=panel_state.top_level_label,
             icon_name=panel_state.icon_name,
             path=panel_state.path,
+            task_path=panel_state.task_path,
             published_at=panel_state.published_at,
-            choices_hash=panel_state.choices_hash,
+            catalog_hash=panel_state.catalog_hash,
             tracking_enabled=tracking_enabled,
             display_label=display_label,
             display_rows=display_rows,
@@ -336,8 +361,9 @@ class UIStateRecord(BaseModel):
                     "top_level_label",
                     "icon_name",
                     "path",
+                    "task_path",
                     "published_at",
-                    "choices_hash",
+                    "catalog_hash",
                 },
             )
         )
@@ -351,6 +377,7 @@ class SpanRecord(BaseModel):
 
     path: str
     top_level: str
+    task_path: str | None = None
     started_at: datetime
     ended_at: datetime
     duration_seconds: float

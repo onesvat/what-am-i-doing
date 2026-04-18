@@ -10,26 +10,34 @@ from typing import Any
 
 from .actions import CommandRunner
 from .classifier import EventClassifier
-from .config import AppConfig, default_config_path, load_config
+from .config import (
+    AppConfig,
+    build_selection_catalog,
+    default_config_path,
+    load_config,
+    load_tasks,
+)
 from .constants import (
     IDLE_ICON,
     PANEL_KIND_CLASSIFIED,
     PANEL_KIND_DISCONNECTED,
     PANEL_KIND_PAUSED,
     PANEL_KIND_UNCLASSIFIED,
-    UNKNOWN_CHOICE_PATH,
+    UNKNOWN_PATH,
 )
 from .debug import DebugLogger, debug_enabled
 from .dbus_service import DaemonDBusService
 from .llm import OpenAICompatibleClient
 from .models import (
     AppPaths,
-    ChoiceRegistry,
+    ClassificationResult,
     DisplayRow,
     PanelStateRecord,
     ProviderSnapshot,
     RefreshResult,
+    SelectionCatalog,
     SpanRecord,
+    ToolCall,
     UIStateRecord,
     utcnow,
 )
@@ -48,8 +56,8 @@ from .storage import (
 
 @dataclass(slots=True)
 class RuntimeState:
-    choices: ChoiceRegistry
-    choices_hash: str
+    catalog: SelectionCatalog
+    catalog_hash: str
     panel_state: PanelStateRecord
     last_classified_started_at: datetime | None
     last_snapshot: ProviderSnapshot | None
@@ -71,7 +79,7 @@ class ActivityDaemon:
         self.classifier = EventClassifier(self.client, self.debug)
         self.command_runner = CommandRunner(self.debug)
         self.provider = GnomeProvider()
-        self.decision_cache: dict[str, str] = {}
+        self.decision_cache: dict[str, ClassificationResult] = {}
         self.runtime = self._load_runtime_state()
         self._refresh_lock = asyncio.Lock()
         self.dbus_service = DaemonDBusService(
@@ -83,63 +91,59 @@ class ActivityDaemon:
         )
 
     def _load_runtime_state(self) -> RuntimeState:
-        choices = self.config.choice_registry()
-        choices_hash = choices.fingerprint()
+        catalog = build_selection_catalog(self.config, load_tasks())
+        catalog_hash = catalog.fingerprint()
         panel_state = load_status(self.paths.status_json)
         if panel_state is None:
             panel_state = PanelStateRecord.disconnected(
                 revision=0,
                 published_at=utcnow(),
-                choices_hash=choices_hash,
+                catalog_hash=catalog_hash,
             )
         else:
-            panel_state = panel_state.model_copy(update={"choices_hash": choices_hash})
+            panel_state = panel_state.model_copy(update={"catalog_hash": catalog_hash})
         last_classified_started_at = (
             panel_state.published_at
             if panel_state.kind == PANEL_KIND_CLASSIFIED
             else None
         )
-        tracking_enabled = load_tracking(self.paths.tracking_json)
         return RuntimeState(
-            choices=choices,
-            choices_hash=choices_hash,
+            catalog=catalog,
+            catalog_hash=catalog_hash,
             panel_state=panel_state,
             last_classified_started_at=last_classified_started_at,
             last_snapshot=None,
-            tracking_enabled=tracking_enabled,
+            tracking_enabled=load_tracking(self.paths.tracking_json),
         )
 
     async def reload_config(self) -> RefreshResult:
         async with self._refresh_lock:
-            previous_paths = self.runtime.choices.allowed_paths()
-            self.debug.log(
-                "config_reload_start",
-                choices=sorted(previous_paths),
-            )
+            previous_paths = self.runtime.catalog.allowed_paths()
+            self.debug.log("config_reload_start", catalog=sorted(previous_paths))
             try:
                 config = load_config(self.config_path)
-                choices = config.choice_registry()
+                catalog = build_selection_catalog(config, load_tasks())
             except Exception as exc:
                 self.debug.log("config_reload_failed", error=str(exc))
                 return RefreshResult(
                     success=False,
-                    message=f"Reload failed ({exc}), keeping current choices",
+                    message=f"Reload failed ({exc}), keeping current catalog",
                     used_cached=True,
                 )
 
             self.config = config
-            self.runtime.choices = choices
-            self.runtime.choices_hash = choices.fingerprint()
+            self.runtime.catalog = catalog
+            self.runtime.catalog_hash = catalog.fingerprint()
             self.decision_cache.clear()
-            message = describe_choice_reload(
+            message = describe_catalog_reload(
                 previous_paths,
-                choices.allowed_paths(),
-                self.runtime.choices_hash,
+                catalog.allowed_paths(),
+                self.runtime.catalog_hash,
             )
             self.debug.log(
                 "config_reload_complete",
-                choices_hash=self.runtime.choices_hash,
-                choices=sorted(choices.allowed_paths()),
+                catalog_hash=self.runtime.catalog_hash,
+                catalog=sorted(catalog.allowed_paths()),
             )
             await self._reconcile_panel_state_after_reload()
             self._publish_ui_state()
@@ -179,133 +183,174 @@ class ActivityDaemon:
         if not self.runtime.tracking_enabled:
             return
         self.runtime.last_snapshot = snapshot
-        state = snapshot.state
         self._log_raw_event(snapshot)
-        previous_selection = self._previous_selection()
-        cache_key = self._decision_key(snapshot, previous_selection)
-        selected = self.decision_cache.get(cache_key)
+        state = snapshot.state
+        previous_result = self._current_result()
+        cache_key = self._decision_key(snapshot, previous_result)
+        result = self.decision_cache.get(cache_key)
         self.debug.log(
             "provider_state",
-            previous_path=previous_selection,
+            previous_result=previous_result.model_dump(mode="json")
+            if previous_result is not None
+            else None,
             cache_key=cache_key,
             revision=snapshot.revision,
             state=state.model_dump(mode="json", exclude_none=True),
         )
-        if selected is None:
-            selected = await self.classifier.classify(
+        if result is None:
+            result = await self.classifier.classify(
                 self.config,
                 state,
-                self.runtime.choices,
-                previous_selection,
+                self.runtime.catalog,
+                previous_result,
             )
-            self.decision_cache[cache_key] = selected
+            self.decision_cache[cache_key] = result
             self.debug.log(
-                "classifier_cache_store", cache_key=cache_key, selected_path=selected
+                "classifier_cache_store",
+                cache_key=cache_key,
+                selected=result.model_dump(mode="json"),
             )
         else:
             self.debug.log(
-                "classifier_cache_hit", cache_key=cache_key, selected_path=selected
+                "classifier_cache_hit",
+                cache_key=cache_key,
+                selected=result.model_dump(mode="json"),
             )
 
-        if self._current_selection() == selected:
-            self.debug.log("activity_unchanged", selected_path=selected)
+        if self._same_result(previous_result, result):
+            self.debug.log("activity_unchanged", selected=result.model_dump(mode="json"))
             return
 
-        if selected == UNKNOWN_CHOICE_PATH:
+        if result.activity_path == UNKNOWN_PATH:
             await self._publish_unclassified(state)
             return
-        if selected == "idle":
+        if result.activity_path == "idle":
             await self._publish_idle(state)
             return
 
-        await self._publish_classified(selected, state)
+        await self._publish_classified(result, state)
 
-    async def _publish_classified(self, path: str, state) -> None:
-        previous = self._current_selection()
+    async def _publish_classified(
+        self, result: ClassificationResult, state: Any
+    ) -> None:
+        previous_result = self._current_result()
         now = utcnow()
         await self._close_previous_span(now)
-        await self._run_actions(path)
-        choice = self.runtime.choices.choice_for_path(path)
-        top_level = path.split("/", 1)[0]
+        await self._run_actions_for_result(result, previous_result)
+        activity_entry = self.runtime.catalog.entry_for_path(result.activity_path)
+        top_level = result.activity_path.split("/", 1)[0]
         panel_state = PanelStateRecord.classified(
             revision=self.runtime.panel_state.revision + 1,
-            path=path,
+            path=result.activity_path,
+            task_path=result.task_path,
             top_level_id=top_level,
             top_level_label=top_level,
-            icon_name=choice.icon or "applications-system-symbolic",
+            icon_name=activity_entry.icon or "applications-system-symbolic",
             published_at=now,
-            choices_hash=self.runtime.choices_hash,
-        )
-        self.runtime.last_classified_started_at = now
-        await self._commit_panel_state(panel_state, state=state, previous=previous)
-
-    async def _publish_idle(self, state) -> None:
-        previous = self._current_selection()
-        now = utcnow()
-        await self._close_previous_span(now)
-        panel_state = PanelStateRecord.classified(
-            revision=self.runtime.panel_state.revision + 1,
-            path="idle",
-            top_level_id="idle",
-            top_level_label="idle",
-            icon_name=IDLE_ICON,
-            published_at=now,
-            choices_hash=self.runtime.choices_hash,
+            catalog_hash=self.runtime.catalog_hash,
         )
         self.runtime.last_classified_started_at = now
         await self._commit_panel_state(
             panel_state,
             state=state,
-            previous=previous,
+            previous=previous_result,
+        )
+
+    async def _publish_idle(self, state: Any) -> None:
+        previous_result = self._current_result()
+        now = utcnow()
+        await self._close_previous_span(now)
+        await self._run_actions_for_result(
+            ClassificationResult(activity_path="idle", task_path=None),
+            previous_result,
+        )
+        panel_state = PanelStateRecord.classified(
+            revision=self.runtime.panel_state.revision + 1,
+            path="idle",
+            task_path=None,
+            top_level_id="idle",
+            top_level_label="idle",
+            icon_name=IDLE_ICON,
+            published_at=now,
+            catalog_hash=self.runtime.catalog_hash,
+        )
+        self.runtime.last_classified_started_at = now
+        await self._commit_panel_state(
+            panel_state,
+            state=state,
+            previous=previous_result,
             reason="idle",
         )
 
-    async def _publish_unclassified(self, state, *, reason: str | None = None) -> None:
-        previous = self._current_selection()
+    async def _publish_unclassified(
+        self, state: Any, *, reason: str | None = None
+    ) -> None:
+        previous_result = self._current_result()
         now = utcnow()
         await self._close_previous_span(now)
+        await self._run_actions_for_result(
+            ClassificationResult(activity_path=UNKNOWN_PATH, task_path=None),
+            previous_result,
+        )
         self.runtime.last_classified_started_at = None
         panel_state = PanelStateRecord.unclassified(
             revision=self.runtime.panel_state.revision + 1,
             published_at=now,
-            choices_hash=self.runtime.choices_hash,
+            catalog_hash=self.runtime.catalog_hash,
         )
         await self._commit_panel_state(
-            panel_state, state=state, previous=previous, reason=reason
+            panel_state,
+            state=state,
+            previous=previous_result,
+            reason=reason,
         )
 
     async def _publish_disconnected(self, *, reason: str | None = None) -> None:
-        previous = self._current_selection()
+        previous_result = self._current_result()
         now = utcnow()
         await self._close_previous_span(now)
+        await self._run_actions_for_result(
+            ClassificationResult(activity_path=UNKNOWN_PATH, task_path=None),
+            previous_result,
+        )
         self.runtime.last_classified_started_at = None
         panel_state = PanelStateRecord.disconnected(
             revision=self.runtime.panel_state.revision + 1,
             published_at=now,
-            choices_hash=self.runtime.choices_hash,
+            catalog_hash=self.runtime.catalog_hash,
         )
-        await self._commit_panel_state(panel_state, previous=previous, reason=reason)
+        await self._commit_panel_state(
+            panel_state,
+            previous=previous_result,
+            reason=reason,
+        )
 
     async def _publish_paused(self) -> None:
-        previous = self._current_selection()
+        previous_result = self._current_result()
         now = utcnow()
         await self._close_previous_span(now)
+        await self._run_actions_for_result(
+            ClassificationResult(activity_path=UNKNOWN_PATH, task_path=None),
+            previous_result,
+        )
         self.runtime.last_classified_started_at = None
         panel_state = PanelStateRecord.paused(
             revision=self.runtime.panel_state.revision + 1,
             published_at=now,
-            choices_hash=self.runtime.choices_hash,
+            catalog_hash=self.runtime.catalog_hash,
         )
         await self._commit_panel_state(
-            panel_state, previous=previous, reason="tracking_paused"
+            panel_state,
+            previous=previous_result,
+            reason="tracking_paused",
         )
 
     async def _commit_panel_state(
         self,
         panel_state: PanelStateRecord,
         *,
-        state=None,
-        previous: str | None,
+        state: Any = None,
+        previous: ClassificationResult | None,
         reason: str | None = None,
     ) -> None:
         if panel_state.same_value(self.runtime.panel_state):
@@ -317,10 +362,14 @@ class ActivityDaemon:
         self.dbus_service.update_ui_state(ui_state)
         self.debug.log(
             "activity_changed",
-            previous_path=previous,
-            selected_path=self._current_selection(),
+            previous_result=previous.model_dump(mode="json")
+            if previous is not None
+            else None,
+            selected=self._current_result().model_dump(mode="json")
+            if self._current_result() is not None
+            else None,
             kind=panel_state.kind,
-            choices_hash=panel_state.choices_hash,
+            catalog_hash=panel_state.catalog_hash,
             reason=reason,
         )
         append_jsonl(
@@ -329,9 +378,10 @@ class ActivityDaemon:
                 "ts": panel_state.published_at.isoformat(),
                 "event": "activity_change",
                 "kind": panel_state.kind,
-                "path": panel_state.path,
+                "activity_path": panel_state.path,
+                "task_path": panel_state.task_path,
                 "top_level": panel_state.top_level_id,
-                "choices_hash": panel_state.choices_hash,
+                "catalog_hash": panel_state.catalog_hash,
                 "title": state.focused_window.title
                 if state and state.focused_window
                 else "",
@@ -358,27 +408,30 @@ class ActivityDaemon:
     def _display_label_for_state(self) -> str:
         current = self.runtime.panel_state
         if current.kind == PANEL_KIND_CLASSIFIED and current.path:
+            if current.task_path:
+                return f"{current.path} • {current.task_path}"
             return current.path
         if current.kind == PANEL_KIND_UNCLASSIFIED:
-            return UNKNOWN_CHOICE_PATH
+            return UNKNOWN_PATH
         if current.kind == PANEL_KIND_PAUSED:
             return PANEL_KIND_PAUSED
         return PANEL_KIND_DISCONNECTED
 
     def _build_display_rows(self) -> list[DisplayRow]:
         durations = self._today_duration_by_path()
-        current_path = self.runtime.panel_state.path
+        current_activity = self.runtime.panel_state.path
+        current_task = self.runtime.panel_state.task_path
         rows: list[DisplayRow] = []
 
-        for choice in self.runtime.choices.choices:
-            seconds = durations.pop(choice.path, 0.0)
+        for entry in self.runtime.catalog.activity_entries + self.runtime.catalog.task_entries:
+            seconds = durations.pop(entry.path, 0.0)
             rows.append(
                 DisplayRow(
-                    path=choice.path,
-                    label=choice.path,
-                    icon_name=choice.icon,
+                    path=entry.path,
+                    label=entry.path,
+                    icon_name=entry.icon,
                     seconds=seconds,
-                    is_selected=current_path == choice.path,
+                    is_selected=entry.path in {current_activity, current_task},
                     is_legacy=False,
                 )
             )
@@ -390,7 +443,7 @@ class ActivityDaemon:
                     label=path,
                     icon_name="applications-system-symbolic",
                     seconds=durations[path],
-                    is_selected=current_path == path,
+                    is_selected=path in {current_activity, current_task},
                     is_legacy=True,
                 )
             )
@@ -406,21 +459,28 @@ class ActivityDaemon:
             if span.ended_at < day_start:
                 continue
             totals[span.path] = totals.get(span.path, 0.0) + span.duration_seconds
+            if span.task_path:
+                totals[span.task_path] = totals.get(span.task_path, 0.0) + span.duration_seconds
         return totals
 
     async def _reconcile_panel_state_after_reload(self) -> None:
         current = self.runtime.panel_state
         if current.kind != PANEL_KIND_CLASSIFIED or current.path is None:
             return
-        if current.path == "idle" or current.path in self.runtime.choices.allowed_paths():
+        allowed = self.runtime.catalog.allowed_paths()
+        if current.path != "idle" and current.path not in allowed:
+            await self._publish_unclassified(state=None, reason="path_removed_from_catalog")
+            return
+        if current.task_path and current.task_path not in allowed:
             self.runtime.panel_state = current.model_copy(
-                update={"choices_hash": self.runtime.choices_hash}
+                update={"task_path": None, "catalog_hash": self.runtime.catalog_hash}
             )
             self.dbus_service.update_panel_state(self.runtime.panel_state)
             return
-        await self._publish_unclassified(
-            state=None, reason="path_removed_from_choices"
+        self.runtime.panel_state = current.model_copy(
+            update={"catalog_hash": self.runtime.catalog_hash}
         )
+        self.dbus_service.update_panel_state(self.runtime.panel_state)
 
     def _log_raw_event(self, snapshot: ProviderSnapshot) -> None:
         window = snapshot.state.focused_window
@@ -445,7 +505,7 @@ class ActivityDaemon:
         )
 
     def _decision_key(
-        self, snapshot: ProviderSnapshot, previous_selection: str | None
+        self, snapshot: ProviderSnapshot, previous_result: ClassificationResult | None
     ) -> str:
         window = snapshot.state.focused_window
         normalized = {
@@ -479,22 +539,54 @@ class ActivityDaemon:
             ],
             "screen_locked": snapshot.state.screen_locked,
             "idle_time_seconds": snapshot.state.idle_time_seconds,
-            "previous_selection": previous_selection,
-            "choices_hash": self.runtime.choices_hash,
+            "previous_result": previous_result.model_dump(mode="json")
+            if previous_result is not None
+            else None,
+            "catalog_hash": self.runtime.catalog_hash,
         }
         serialized = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
+    async def _run_actions_for_result(
+        self,
+        result: ClassificationResult,
+        previous_result: ClassificationResult | None,
+    ) -> None:
+        current_path = result.task_path or result.activity_path
+        previous_path = (
+            previous_result.task_path or previous_result.activity_path
+            if previous_result is not None
+            else None
+        )
+        if previous_result is not None and previous_result.task_path and result.task_path is None:
+            current_calls = self._calls_for_path(current_path)
+            if not current_calls and "sp_stop" in self.config.tools.actions:
+                await self.command_runner.run_calls(
+                    self.config.tools.actions,
+                    [self._stop_call()],
+                )
+        if current_path == previous_path or current_path == "idle":
+            return
+        await self._run_actions(current_path)
+
     async def _run_actions(self, path: str) -> None:
-        calls = self.runtime.choices.actions_for_path(path)
+        calls = self._calls_for_path(path)
+        if not calls:
+            return
         self.debug.log(
             "action_dispatch",
             path=path,
             calls=[call.model_dump(mode="json") for call in calls],
         )
-        if not calls:
-            return
         await self.command_runner.run_calls(self.config.tools.actions, calls)
+
+    def _calls_for_path(self, path: str) -> list[ToolCall]:
+        if path not in self.runtime.catalog.allowed_paths():
+            return []
+        return self.runtime.catalog.actions_for_path(path)
+
+    def _stop_call(self) -> ToolCall:
+        return ToolCall(tool="sp_stop", args=[])
 
     async def _close_previous_span(self, ended_at: datetime) -> None:
         if self.runtime.panel_state.kind != PANEL_KIND_CLASSIFIED:
@@ -508,6 +600,7 @@ class ActivityDaemon:
             path=self.runtime.panel_state.path,
             top_level=self.runtime.panel_state.top_level_id
             or self.runtime.panel_state.path.split("/", 1)[0],
+            task_path=self.runtime.panel_state.task_path,
             started_at=self.runtime.last_classified_started_at,
             ended_at=ended_at,
             duration_seconds=max(
@@ -517,38 +610,42 @@ class ActivityDaemon:
         )
         save_span(self.paths.spans_log, span)
 
-    def _current_selection(self) -> str | None:
+    def _current_result(self) -> ClassificationResult | None:
         current = self.runtime.panel_state
-        if current.kind == PANEL_KIND_CLASSIFIED:
-            return current.path
+        if current.kind == PANEL_KIND_CLASSIFIED and current.path:
+            return ClassificationResult(
+                activity_path=current.path,
+                task_path=current.task_path,
+            )
         if current.kind == PANEL_KIND_UNCLASSIFIED:
-            return UNKNOWN_CHOICE_PATH
+            return ClassificationResult(activity_path=UNKNOWN_PATH, task_path=None)
         return None
 
-    def _previous_selection(self) -> str | None:
-        current = self.runtime.panel_state
-        if current.kind == PANEL_KIND_CLASSIFIED:
-            return current.path
-        if current.kind == PANEL_KIND_UNCLASSIFIED:
-            return UNKNOWN_CHOICE_PATH
-        return None
+    def _same_result(
+        self,
+        left: ClassificationResult | None,
+        right: ClassificationResult | None,
+    ) -> bool:
+        if left is None or right is None:
+            return left is right
+        return left == right
 
     async def status_payload(self) -> dict[str, Any]:
         return self._build_ui_state().model_dump(mode="json")
 
 
-def describe_choice_reload(
+def describe_catalog_reload(
     previous_paths: set[str],
     current_paths: set[str],
-    choices_hash: str,
+    catalog_hash: str,
 ) -> str:
     added = sorted(current_paths - previous_paths)
     removed = sorted(previous_paths - current_paths)
-    message = f"Loaded {len(current_paths)} choices"
+    message = f"Loaded {len(current_paths)} catalog entries"
     if not added and not removed:
-        return f"{message} (unchanged, hash={choices_hash[:8]})"
+        return f"{message} (unchanged, hash={catalog_hash[:8]})"
 
-    parts = [f"hash={choices_hash[:8]}"]
+    parts = [f"hash={catalog_hash[:8]}"]
     if added:
         parts.append("added: " + summarize_paths(added))
     if removed:

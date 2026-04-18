@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-CLASSIFIER_BASE_PROMPT = """You classify the current GNOME desktop event into one allowed choice.
+CLASSIFIER_BASE_PROMPT = """You classify the current GNOME desktop event into one general activity and one optional Super Productivity task.
 
 Rules:
-- Return only one allowed path exactly, or `unknown`.
-- Classify by current intention, not just the app name.
+- Return JSON only.
+- Always set `activity_path` to one allowed general activity, `idle`, or `unknown`.
+- Set `task_path` to an allowed task only when the current work clearly matches it.
+- Terminal, editor, browser, docs, chat, repo name, branch, notes, and page titles can all support the same task match.
+- Explicit porn or sexually explicit content must prefer the adult activity even when it is also browsing.
 - Prefer a configured path over `unknown` when there is a plausible match.
-- Use `unknown` only when no configured path is plausible.
-- Switch choices as soon as the user's intention changes.
+- Switch activities or tasks as soon as the user's intention changes.
 - Do not explain your reasoning.
 """

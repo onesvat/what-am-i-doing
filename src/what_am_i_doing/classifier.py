@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import json
+
 from .config import AppConfig
-from .constants import UNKNOWN_CHOICE_PATH
+from .constants import UNKNOWN_PATH
 from .debug import DebugLogger
 from .defaults import CLASSIFIER_BASE_PROMPT
 from .llm import LLMError, OpenAICompatibleClient
-from .models import ChoiceRegistry, ProviderState, WindowInfo
+from .models import (
+    ClassificationResult,
+    ProviderState,
+    SelectionCatalog,
+    WindowInfo,
+)
 
 
 class EventClassifier:
@@ -19,75 +26,123 @@ class EventClassifier:
         self,
         config: AppConfig,
         state: ProviderState,
-        choices: ChoiceRegistry,
-        previous_path: str | None,
-    ) -> str:
+        catalog: SelectionCatalog,
+        previous_result: ClassificationResult | None,
+    ) -> ClassificationResult:
         if config.classify_idle and state.idle_time_seconds is not None:
             if state.idle_time_seconds >= config.idle_threshold_seconds:
-                return "idle"
+                return ClassificationResult(activity_path="idle", task_path=None)
 
-        allowed_paths = sorted(choices.allowed_paths())
-        valid_outputs = allowed_paths + [UNKNOWN_CHOICE_PATH]
-        if not allowed_paths:
-            return UNKNOWN_CHOICE_PATH
+        activity_outputs = sorted(catalog.activity_paths())
+        task_outputs = sorted(catalog.task_paths())
+        if not activity_outputs:
+            return ClassificationResult(activity_path=UNKNOWN_PATH, task_path=None)
 
         base_prompt = self._build_prompt(
-            config, state, choices, previous_path, valid_outputs
+            config,
+            state,
+            catalog,
+            previous_result,
+            activity_outputs,
+            task_outputs,
         )
-        last_invalid: str | None = None
+        last_invalid = "<empty>"
         for attempt in range(config.classifier.retry_count + 1):
             prompt = base_prompt
-            if last_invalid is not None:
+            if attempt > 0:
                 prompt += (
                     "\n\nYour previous answer was invalid.\n"
                     f"Attempt: {attempt}\n"
                     f"Previous answer: {last_invalid}\n"
-                    "Valid choices are:\n"
-                    + "\n".join(f"- {path}" for path in valid_outputs)
-                    + "\nReturn only one valid path exactly."
+                    "Return valid JSON with an allowed activity_path and optional task_path."
                 )
             try:
                 if self.debug is not None:
                     self.debug.log(
                         "classifier_attempt",
                         attempt=attempt,
-                        previous_path=previous_path,
-                        allowed=valid_outputs,
+                        previous_result=previous_result.model_dump(mode="json")
+                        if previous_result is not None
+                        else None,
+                        activity_outputs=activity_outputs,
+                        task_outputs=task_outputs,
                         prompt=prompt,
                     )
-                result = self.client.chat(
+                raw_result = self.client.chat(
                     config.classifier_model,
                     [{"role": "user", "content": prompt}],
+                    json_mode=True,
                 ).strip()
             except LLMError:
-                result = ""
+                raw_result = ""
             if self.debug is not None:
-                self.debug.log("classifier_result", attempt=attempt, result=result)
-            if result in valid_outputs:
-                return result
-            last_invalid = result or "<empty>"
+                self.debug.log("classifier_result", attempt=attempt, result=raw_result)
+            parsed = self._parse_result(raw_result, activity_outputs, task_outputs)
+            if parsed is not None:
+                return parsed
+            last_invalid = raw_result or "<empty>"
         if self.debug is not None:
             self.debug.log(
                 "classifier_fallback",
-                previous_path=previous_path,
-                fallback=UNKNOWN_CHOICE_PATH,
+                previous_result=previous_result.model_dump(mode="json")
+                if previous_result is not None
+                else None,
+                fallback=UNKNOWN_PATH,
                 last_invalid=last_invalid,
             )
-        return UNKNOWN_CHOICE_PATH
+        return ClassificationResult(activity_path=UNKNOWN_PATH, task_path=None)
+
+    def _parse_result(
+        self,
+        raw_result: str,
+        activity_outputs: list[str],
+        task_outputs: list[str],
+    ) -> ClassificationResult | None:
+        try:
+            payload = json.loads(_strip_fences(raw_result))
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        activity_path = payload.get("activity_path")
+        task_path = payload.get("task_path")
+        if not isinstance(activity_path, str):
+            return None
+        if activity_path not in set(activity_outputs) | {"idle", UNKNOWN_PATH}:
+            return None
+        if task_path is not None and not isinstance(task_path, str):
+            return None
+        if task_path is not None and task_path not in task_outputs:
+            return None
+        if activity_path in {"idle", UNKNOWN_PATH}:
+            task_path = None
+        return ClassificationResult(activity_path=activity_path, task_path=task_path)
 
     def _build_prompt(
         self,
         config: AppConfig,
         state: ProviderState,
-        choices: ChoiceRegistry,
-        previous_path: str | None,
-        valid_outputs: list[str],
+        catalog: SelectionCatalog,
+        previous_result: ClassificationResult | None,
+        activity_outputs: list[str],
+        task_outputs: list[str],
     ) -> str:
         sections = [
             CLASSIFIER_BASE_PROMPT.strip(),
-            "Allowed outputs:\n" + "\n".join(f"- {path}" for path in valid_outputs),
-            "Available choices:\n" + choices.describe(),
-            f"Previous path: {previous_path or 'none'}",
+            "Allowed activity_path values:\n"
+            + "\n".join(f"- {path}" for path in activity_outputs + ["idle", UNKNOWN_PATH]),
+            "Allowed task_path values:\n"
+            + ("\n".join(f"- {path}" for path in task_outputs) if task_outputs else "- null")
+            + "\n- null",
+            "General activities:\n" + catalog.describe_activities(),
+            "SP tasks:\n"
+            + (catalog.describe_tasks() if task_outputs else "- No SP tasks available."),
+            "Previous result:\n"
+            + (
+                json.dumps(previous_result.model_dump(mode="json"), sort_keys=True)
+                if previous_result is not None
+                else '{"activity_path":"unknown","task_path":null}'
+            ),
             "Current event:\n" + self._state_summary(state),
         ]
         supporting_windows = self._supporting_windows_summary(state)
@@ -96,6 +151,9 @@ class EventClassifier:
         rendered_instructions = config.render_classifier_instructions().strip()
         if rendered_instructions:
             sections.append("User instructions:\n" + rendered_instructions)
+        sections.append(
+            'Return JSON only, for example: {"activity_path":"coding/terminal","task_path":"example-task"}'
+        )
         return "\n\n".join(sections)
 
     def _state_summary(self, state: ProviderState) -> str:
@@ -173,3 +231,12 @@ class EventClassifier:
             and left.wm_class == right.wm_class
             and left.title == right.title
         )
+
+
+def _strip_fences(raw: str) -> str:
+    text = raw.strip()
+    if text.startswith("```") and text.endswith("```"):
+        lines = text.splitlines()
+        if len(lines) >= 3:
+            return "\n".join(lines[1:-1]).strip()
+    return text

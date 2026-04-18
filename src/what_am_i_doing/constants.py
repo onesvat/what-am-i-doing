@@ -6,6 +6,7 @@ from pathlib import Path
 APP_NAME = "waid"
 CONFIG_DIR = Path.home() / ".config" / APP_NAME
 CONFIG_PATH = CONFIG_DIR / "config.yaml"
+TASKS_PATH = CONFIG_DIR / "tasks.yaml"
 STATE_DIR = Path.home() / ".local" / "state" / APP_NAME
 SYSTEMD_USER_DIR = Path.home() / ".config" / "systemd" / "user"
 SERVICE_NAME = f"{APP_NAME}.service"
@@ -28,8 +29,8 @@ PANEL_KIND_CLASSIFIED = "classified"
 PANEL_KIND_UNCLASSIFIED = "unclassified"
 PANEL_KIND_DISCONNECTED = "disconnected"
 PANEL_KIND_PAUSED = "paused"
-UNKNOWN_CHOICE_PATH = "unknown"
-RESERVED_CHOICE_PATHS = {
+UNKNOWN_PATH = "unknown"
+RESERVED_PATHS = {
     "unknown",
     "idle",
     PANEL_KIND_CLASSIFIED,
@@ -37,7 +38,7 @@ RESERVED_CHOICE_PATHS = {
     PANEL_KIND_DISCONNECTED,
     PANEL_KIND_PAUSED,
 }
-RESERVED_CATEGORY_NAMES = RESERVED_CHOICE_PATHS
+RESERVED_CATEGORY_NAMES = RESERVED_PATHS
 IDLE_ICON = "system-suspend-symbolic"
 UNCLASSIFIED_ICON = "help-about-symbolic"
 DISCONNECTED_ICON = "network-offline-symbolic"

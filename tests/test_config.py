@@ -11,11 +11,18 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from what_am_i_doing.config import AppConfig, build_minimal_config, load_config
+from what_am_i_doing.config import (
+    AppConfig,
+    build_minimal_config,
+    build_selection_catalog,
+    load_config,
+    load_tasks,
+)
+from what_am_i_doing.models import CatalogEntry
 
 
 class ConfigTest(unittest.TestCase):
-    def test_load_config_accepts_flat_choices(self) -> None:
+    def test_load_config_accepts_activities(self) -> None:
         yaml_text = textwrap.dedent(
             """
             version: 2
@@ -24,13 +31,10 @@ class ConfigTest(unittest.TestCase):
               name: gemma
             classifier:
               instructions: |
-                Prefer work/project-a when coding in that repo.
-            choices:
-              - path: work/project-a
-                description: Main work stream
-                icon: laptop-symbolic
-              - path: browsing/reference
-                description: Reading and lookup
+                Prefer fix-waid when repo matches.
+            activities:
+              - path: custom/research
+                description: Custom research
             tools:
               actions: {}
             """
@@ -40,61 +44,13 @@ class ConfigTest(unittest.TestCase):
             handle.flush()
             config = load_config(handle.name)
 
-        self.assertEqual(2, config.version)
-        self.assertEqual(
-            ["work/project-a", "browsing/reference"],
-            [choice.path for choice in config.choices],
-        )
-        self.assertEqual(
-            {"work/project-a", "browsing/reference"},
-            config.choice_registry().allowed_paths(),
-        )
+        self.assertEqual(["custom/research"], [entry.path for entry in config.activities])
+        catalog = build_selection_catalog(config, [CatalogEntry(path="fix-waid")])
+        self.assertIn("browsing/social_media", catalog.activity_paths())
+        self.assertIn("custom/research", catalog.activity_paths())
+        self.assertEqual({"fix-waid"}, catalog.task_paths())
 
-    def test_import_directive_loads_flat_choices(self) -> None:
-        config_yaml = textwrap.dedent(
-            """
-            version: 2
-            model:
-              base_url: http://localhost:11434/v1
-              name: gemma
-            classifier:
-              instructions: ""
-            choices:
-              - path: coding/review
-                description: Code review
-              - import: imported.yaml
-            tools:
-              actions:
-                sp_start:
-                  run: ["sp", "task", "start"]
-            """
-        )
-        imported_yaml = textwrap.dedent(
-            """
-            - path: work/project-a
-              description: Main work stream
-              actions:
-                - tool: sp_start
-                  args: ["123"]
-            - path: admin/inbox
-              description: Inbox cleanup
-            """
-        )
-        with tempfile.TemporaryDirectory() as tmpdir:
-            config_path = Path(tmpdir) / "config.yaml"
-            imported_path = Path(tmpdir) / "imported.yaml"
-            config_path.write_text(config_yaml, encoding="utf-8")
-            imported_path.write_text(imported_yaml, encoding="utf-8")
-
-            config = load_config(config_path)
-
-        self.assertEqual(
-            ["coding/review", "work/project-a", "admin/inbox"],
-            [choice.path for choice in config.choices],
-        )
-        self.assertEqual("sp_start", config.choices[1].actions[0].tool)
-
-    def test_missing_import_raises(self) -> None:
+    def test_old_choices_schema_is_rejected(self) -> None:
         yaml_text = textwrap.dedent(
             """
             version: 2
@@ -104,56 +60,70 @@ class ConfigTest(unittest.TestCase):
             classifier:
               instructions: ""
             choices:
-              - import: missing.yaml
+              - path: old/path
             """
         )
         with tempfile.NamedTemporaryFile("w+", suffix=".yaml") as handle:
             handle.write(yaml_text)
             handle.flush()
-            with self.assertRaises(FileNotFoundError):
+            with self.assertRaises(Exception):
                 load_config(handle.name)
 
-    def test_duplicate_choice_paths_are_rejected(self) -> None:
+    def test_inline_tasks_schema_is_rejected(self) -> None:
         with self.assertRaises(Exception):
             AppConfig.model_validate(
                 {
                     "version": 2,
                     "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
                     "classifier": {"instructions": ""},
-                    "choices": [
-                        {"path": "work/project-a"},
-                        {"path": "work/project-a"},
-                    ],
+                    "tasks": [{"path": "fix-waid"}],
                 }
             )
 
-    def test_unknown_action_tool_is_rejected(self) -> None:
+    def test_allow_and_block_overlap_is_rejected(self) -> None:
         with self.assertRaises(Exception):
             AppConfig.model_validate(
                 {
                     "version": 2,
                     "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
                     "classifier": {"instructions": ""},
-                    "choices": [
-                        {
-                            "path": "work/project-a",
-                            "actions": [{"tool": "missing_tool", "args": []}],
-                        }
-                    ],
-                    "tools": {"actions": {}},
+                    "allow_activities": ["browsing/other"],
+                    "block_activities": ["browsing/other"],
                 }
             )
 
-    def test_reserved_choice_path_is_rejected(self) -> None:
+    def test_custom_activity_cannot_override_builtin(self) -> None:
         with self.assertRaises(Exception):
             AppConfig.model_validate(
                 {
                     "version": 2,
                     "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
                     "classifier": {"instructions": ""},
-                    "choices": [{"path": "unknown"}],
+                    "activities": [{"path": "browsing/other"}],
                 }
             )
+
+    def test_unknown_action_tool_is_rejected_in_tasks_file(self) -> None:
+        config = AppConfig.model_validate(
+            {
+                "version": 2,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "classifier": {"instructions": ""},
+                "tools": {"actions": {}},
+            }
+        )
+        with self.assertRaises(Exception):
+            build_selection_catalog(
+                config,
+                [CatalogEntry(path="fix-waid", actions=[{"tool": "missing_tool"}])],
+            )
+
+    def test_reserved_task_path_is_rejected(self) -> None:
+        with tempfile.NamedTemporaryFile("w+", suffix=".yaml") as handle:
+            handle.write("- path: unknown\n")
+            handle.flush()
+            with self.assertRaises(Exception):
+                load_tasks(handle.name)
 
     def test_build_minimal_config_is_version_two_and_empty(self) -> None:
         config = build_minimal_config(
@@ -163,8 +133,9 @@ class ConfigTest(unittest.TestCase):
         )
 
         self.assertEqual(2, config.version)
-        self.assertEqual([], config.choices)
+        self.assertEqual([], config.activities)
         self.assertEqual({}, config.tools.actions)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -12,8 +12,14 @@ if str(SRC) not in sys.path:
 
 from what_am_i_doing.classifier import EventClassifier
 from what_am_i_doing.config import AppConfig
-from what_am_i_doing.constants import UNKNOWN_CHOICE_PATH
-from what_am_i_doing.models import ChoiceRegistry, ProviderState, WindowInfo, utcnow
+from what_am_i_doing.constants import UNKNOWN_PATH
+from what_am_i_doing.models import (
+    ClassificationResult,
+    ProviderState,
+    SelectionCatalog,
+    WindowInfo,
+    utcnow,
+)
 
 
 class FakeClient:
@@ -28,11 +34,14 @@ class FakeClient:
 
 class ClassifierTest(unittest.TestCase):
     def test_retry_then_fallback_to_unknown(self) -> None:
-        choices = ChoiceRegistry.model_validate(
+        catalog = SelectionCatalog.model_validate(
             {
-                "choices": [
-                    {"path": "work/project-a", "description": "Main work stream"},
-                ]
+                "activity_entries": [
+                    {"path": "coding/ide", "description": "Main work stream"},
+                ],
+                "task_entries": [
+                    {"path": "project-a", "description": "Specific task"},
+                ],
             }
         )
         config = AppConfig.model_validate(
@@ -41,33 +50,34 @@ class ClassifierTest(unittest.TestCase):
                 "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
                 "classifier": {
                     "retry_count": 1,
-                    "instructions": "Prefer work/project-a when the repo matches.",
+                    "instructions": "Prefer project-a when the repo matches.",
                 },
-                "choices": [
-                    {"path": "work/project-a", "description": "Main work stream"},
-                ],
+                "allow_activities": ["coding/ide"],
             }
         )
         state = ProviderState(timestamp=utcnow())
         client = FakeClient(["wrong", "still wrong"])
         classifier = EventClassifier(client)
 
-        result = asyncio.run(classifier.classify(config, state, choices, None))
+        result = asyncio.run(classifier.classify(config, state, catalog, None))
 
-        self.assertEqual(UNKNOWN_CHOICE_PATH, result)
+        self.assertEqual(
+            ClassificationResult(activity_path=UNKNOWN_PATH, task_path=None),
+            result,
+        )
         self.assertEqual(2, len(client.calls))
-        self.assertIn("Prefer work/project-a", client.calls[0])
+        self.assertIn("Prefer project-a", client.calls[0])
 
     def test_idle_detection_short_circuits_llm(self) -> None:
-        choices = ChoiceRegistry.model_validate(
-            {"choices": [{"path": "work/project-a", "description": "Work"}]}
+        catalog = SelectionCatalog.model_validate(
+            {"activity_entries": [{"path": "coding/ide", "description": "Work"}]}
         )
         config = AppConfig.model_validate(
             {
                 "version": 2,
                 "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
                 "classifier": {"instructions": ""},
-                "choices": [{"path": "work/project-a", "description": "Work"}],
+                "allow_activities": ["coding/ide"],
                 "idle_threshold_seconds": 60,
                 "classify_idle": True,
             }
@@ -76,18 +86,23 @@ class ClassifierTest(unittest.TestCase):
         client = FakeClient([])
         classifier = EventClassifier(client)
 
-        result = asyncio.run(classifier.classify(config, state, choices, None))
+        result = asyncio.run(classifier.classify(config, state, catalog, None))
 
-        self.assertEqual("idle", result)
+        self.assertEqual(
+            ClassificationResult(activity_path="idle", task_path=None), result
+        )
         self.assertEqual([], client.calls)
 
-    def test_prompt_lists_choices_and_unknown(self) -> None:
-        choices = ChoiceRegistry.model_validate(
+    def test_prompt_lists_activities_tasks_and_unknown(self) -> None:
+        catalog = SelectionCatalog.model_validate(
             {
-                "choices": [
-                    {"path": "work/project-a", "description": "Main work stream"},
-                    {"path": "browsing/reference", "description": "Reading"},
-                ]
+                "activity_entries": [
+                    {"path": "coding/ide", "description": "Main work stream"},
+                    {"path": "browsing/other", "description": "Reading"},
+                ],
+                "task_entries": [
+                    {"path": "project-a", "description": "Specific task context"},
+                ],
             }
         )
         config = AppConfig.model_validate(
@@ -95,30 +110,38 @@ class ClassifierTest(unittest.TestCase):
                 "version": 2,
                 "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
                 "classifier": {"instructions": ""},
-                "choices": [
-                    {"path": "work/project-a", "description": "Main work stream"},
-                    {"path": "browsing/reference", "description": "Reading"},
-                ],
+                "allow_activities": ["coding/ide", "browsing/other"],
             }
         )
         state = ProviderState(
             timestamp=utcnow(),
             focused_window=WindowInfo(title="README.md", wm_class="code"),
         )
-        client = FakeClient(["work/project-a"])
+        client = FakeClient(
+            ['{"activity_path":"coding/ide","task_path":"project-a"}']
+        )
         classifier = EventClassifier(client)
 
         result = asyncio.run(
-            classifier.classify(config, state, choices, "browsing/reference")
+            classifier.classify(
+                config,
+                state,
+                catalog,
+                ClassificationResult(activity_path="browsing/other", task_path=None),
+            )
         )
 
-        self.assertEqual("work/project-a", result)
+        self.assertEqual(
+            ClassificationResult(activity_path="coding/ide", task_path="project-a"),
+            result,
+        )
         prompt = client.calls[0]
-        self.assertIn("Available choices:", prompt)
-        self.assertIn("- work/project-a: Main work stream", prompt)
-        self.assertIn("- browsing/reference: Reading", prompt)
-        self.assertIn(f"- {UNKNOWN_CHOICE_PATH}", prompt)
-        self.assertIn("Previous path: browsing/reference", prompt)
+        self.assertIn("Allowed activity_path values:", prompt)
+        self.assertIn("- coding/ide: Main work stream", prompt)
+        self.assertIn("- browsing/other: Reading", prompt)
+        self.assertIn("- project-a: Specific task context", prompt)
+        self.assertIn(f"- {UNKNOWN_PATH}", prompt)
+        self.assertIn('"activity_path": "browsing/other"', prompt)
 
 
 if __name__ == "__main__":
