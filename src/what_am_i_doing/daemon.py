@@ -469,7 +469,7 @@ class ActivityDaemon:
         )
         totals: dict[str, float] = {}
         for span in spans:
-            if span.ended_at < day_start:
+            if span.started_at < day_start:
                 continue
             totals[span.path] = totals.get(span.path, 0.0) + span.duration_seconds
             if span.task_path:

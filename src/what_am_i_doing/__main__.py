@@ -219,7 +219,7 @@ def _stats_payload(period: str) -> dict[str, Any]:
     by_path: dict[str, float] = {}
     by_task: dict[str, float] = {}
     for span in spans:
-        if window_start is not None and span.ended_at < window_start:
+        if window_start is not None and span.started_at < window_start:
             continue
         by_top[span.top_level] = by_top.get(span.top_level, 0.0) + span.duration_seconds
         by_path[span.path] = by_path.get(span.path, 0.0) + span.duration_seconds

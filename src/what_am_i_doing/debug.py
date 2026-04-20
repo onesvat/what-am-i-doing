@@ -17,15 +17,20 @@ def debug_enabled() -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
+_MAX_BYTES = 50 * 1024 * 1024
+
+
 class DebugLogger:
-    def __init__(self, path: Path, *, enabled: bool) -> None:
+    def __init__(self, path: Path, *, enabled: bool, max_bytes: int = _MAX_BYTES) -> None:
         self.path = path
         self.enabled = enabled
+        self.max_bytes = max_bytes
 
     def log(self, event: str, **payload: Any) -> None:
         if not self.enabled:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._rotate_if_needed()
         append_jsonl(
             self.path,
             {
@@ -34,6 +39,21 @@ class DebugLogger:
                 **payload,
             },
         )
+
+    def _rotate_if_needed(self) -> None:
+        try:
+            size = self.path.stat().st_size
+        except FileNotFoundError:
+            return
+        if size < self.max_bytes:
+            return
+        backup = self.path.with_suffix(self.path.suffix + ".1")
+        try:
+            if backup.exists():
+                backup.unlink()
+            self.path.rename(backup)
+        except OSError:
+            pass
 
 
 def load_debug_entries(path: Path, *, lines: int) -> list[dict[str, Any]]:

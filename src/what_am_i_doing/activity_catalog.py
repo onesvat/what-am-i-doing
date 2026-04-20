@@ -30,11 +30,11 @@ BUILTIN_ACTIVITY_DEFINITIONS: list[dict[str, str]] = [
     },
     {
         "path": "coding/ide",
-        "description": "Code editing, project navigation, refactoring, reading source, and other IDE-centered development.",
+        "description": "Code editing in a graphical IDE or editor: VS Code, JetBrains IDEs, Zed, Sublime, Xcode, Android Studio, GNOME Builder. Also choose this when a TUI editor (nvim, vim, emacs, helix) is clearly active inside a terminal (title shows the file or editor mode). Do NOT choose this just because the terminal sits in a code repo.",
     },
     {
         "path": "coding/terminal",
-        "description": "Shell-heavy work, git commands, builds, package management, servers, logs, and command-line development.",
+        "description": "Any terminal emulator (kitty, alacritty, wezterm, foot, gnome-terminal, konsole, xterm, tmux, ghostty) when it is NOT running a TUI editor. Shell prompts, git commands, builds, package managers, REPLs, servers, logs, SSH sessions, Claude Code, LLM CLIs. Default coding choice for wm_class of a terminal emulator unless a TUI editor is visibly active.",
     },
     {
         "path": "communication/chat",

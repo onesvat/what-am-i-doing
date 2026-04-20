@@ -53,7 +53,9 @@ def main() -> int:
     sp_binary = detect_sp_binary(config)
     try:
         tasks = load_sp_tasks(sp_binary)
-        generated = build_task_entries(tasks, config=config)
+        projects = load_sp_projects(sp_binary)
+        project_map = {p["id"]: p["title"] for p in projects}
+        generated = build_task_entries(tasks, project_map=project_map, config=config)
         content = yaml.safe_dump(generated, sort_keys=False, allow_unicode=True)
         changed = write_if_changed(output_path, content)
     except Exception as exc:
@@ -86,7 +88,26 @@ def load_sp_tasks(sp_binary: str) -> list[dict]:
     return [task for task in payload if isinstance(task, dict)]
 
 
-def build_task_entries(tasks: list[dict], *, config) -> list[dict]:
+def load_sp_projects(sp_binary: str) -> list[dict]:
+    result = subprocess.run(
+        [sp_binary, "project", "list", "--json"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        # maybe some versions of sp don't have project command
+        return []
+    try:
+        payload = json.loads(result.stdout)
+        if isinstance(payload, list):
+            return [p for p in payload if isinstance(p, dict)]
+    except json.JSONDecodeError:
+        pass
+    return []
+
+
+def build_task_entries(tasks: list[dict], *, project_map: dict[str, str], config) -> list[dict]:
     llm = OpenAICompatibleClient()
     used_paths: set[str] = set()
     entries: list[dict] = []
@@ -95,30 +116,38 @@ def build_task_entries(tasks: list[dict], *, config) -> list[dict]:
         title = str(task.get("title", "")).strip()
         if not task_id or not title or bool(task.get("isDone")):
             continue
-        path = uniquify_path(slugify(title), task_id, used_paths)
+        
+        project_id = str(task.get("projectId", "")).strip()
+        project_name = project_map.get(project_id, "") or str(task.get("project", "")).strip()
+        
+        task_slug = slugify(title)
+        effective_project = project_name if project_name.lower() != "inbox" else ""
+        base_path = f"{slugify(effective_project)}/{task_slug}" if effective_project else task_slug
+        path = uniquify_path(base_path, task_id, used_paths)
         entries.append(
             {
                 "path": path,
-                "description": describe_task(task, config=config, llm=llm),
+                "description": describe_task(task, project_name=project_name, config=config, llm=llm),
                 "icon": "folder-symbolic",
-                "actions": [{"tool": "sp_start", "args": [task_id]}],
+                # "actions": [{"tool": "sp_start", "args": [task_id]}],
             }
         )
     return entries
 
 
-def describe_task(task: dict, *, config, llm: OpenAICompatibleClient) -> str:
+def describe_task(task: dict, *, project_name: str, config, llm: OpenAICompatibleClient) -> str:
     title = str(task.get("title", "")).strip()
-    project = str(task.get("project", "") or task.get("projectId", "")).strip()
     notes = str(task.get("notes", "")).strip()
     prompt = [
-        "Write one short description for a desktop activity classifier.",
-        "Focus on likely actions, pages, chats, commands, repositories, or documents that indicate this task is active.",
+        "Write one short description (1-2 sentences) for a desktop activity classifier.",
+        "The classifier matches this task against live window titles, app names, URLs, file paths, chat threads, repo names, and document names.",
+        "List the concrete, distinctive signals that indicate the user is actively working on this task: specific app or site names, repo or project names, file types, URL fragments, chat partners, keywords likely to appear in window titles. Be specific, not generic.",
+        "Avoid vague phrases like 'reviewing', 'managing', 'working on' without any specific anchor.",
         "Do not mention Super Productivity, IDs, or formatting instructions.",
         f"Task title: {title}",
     ]
-    if project:
-        prompt.append(f"Project: {project}")
+    if project_name:
+        prompt.append(f"Project: {project_name}")
     if notes:
         prompt.append(f"Notes: {notes}")
     response = llm.chat(

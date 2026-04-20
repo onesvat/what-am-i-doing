@@ -68,12 +68,12 @@ class OpenAICompatibleClient:
             if self.debug is not None:
                 self.debug.log("llm_error", model=model.name, endpoint=endpoint, error=str(exc))
             raise LLMError(str(exc)) from exc
-        if self.debug is not None:
-            self.debug.log("llm_response_raw", model=model.name, body=body)
         try:
             parsed = json.loads(body)
             content = parsed["choices"][0]["message"]["content"]
         except (KeyError, IndexError, json.JSONDecodeError) as exc:
+            if self.debug is not None:
+                self.debug.log("llm_response_raw", model=model.name, body=body)
             raise LLMError(f"invalid llm response: {body}") from exc
         if not isinstance(content, str):
             raise LLMError("llm content is not a string")
