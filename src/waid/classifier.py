@@ -157,6 +157,11 @@ class EventClassifier:
         activity_outputs: list[str],
         task_outputs: list[str],
     ) -> str:
+        task_section = (
+            "Tasks:\n" + catalog.describe_tasks()
+            if task_outputs
+            else None
+        )
         sections = [
             CLASSIFIER_BASE_PROMPT.strip(),
             "Allowed activity_path values:\n"
@@ -165,6 +170,10 @@ class EventClassifier:
             + ("\n".join(f"- {path}" for path in task_outputs) if task_outputs else "- null")
             + "\n- null",
             "Activities:\n" + catalog.describe_activities(),
+        ]
+        if task_section:
+            sections.append(task_section)
+        sections += [
             "Current event:\n" + self._state_summary(state),
         ]
         rendered_instructions = config.render_classifier_instructions().strip()
