@@ -13,6 +13,19 @@ class LLMError(RuntimeError):
     pass
 
 
+def build_vision_message(text: str, image_base64: str, media_type: str = "image/png") -> dict[str, Any]:
+    return {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": text},
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:{media_type};base64,{image_base64}"},
+            },
+        ],
+    }
+
+
 class OpenAICompatibleClient:
     def __init__(self, debug: DebugLogger | None = None) -> None:
         self.debug = debug
@@ -20,7 +33,7 @@ class OpenAICompatibleClient:
     def chat(
         self,
         model: ModelConfig,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         *,
         json_mode: bool = False,
         max_tokens: int | None = None,
