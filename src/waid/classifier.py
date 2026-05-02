@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import base64
 import json
+
+from pathlib import Path
 
 from .config import AppConfig
 from .constants import UNKNOWN_PATH
 from .debug import DebugLogger
 from .defaults import CLASSIFIER_BASE_PROMPT
-from .llm import LLMError, OpenAICompatibleClient
+from .llm import LLMError, OpenAICompatibleClient, build_vision_message
 from .models import (
     ClassificationResult,
     ProviderState,
@@ -28,6 +31,7 @@ class EventClassifier:
         state: ProviderState,
         catalog: SelectionCatalog,
         previous_result: ClassificationResult | None,
+        screenshot_path: str | None = None,
     ) -> ClassificationResult:
         if config.classify_idle and state.idle_time_seconds is not None:
             if state.idle_time_seconds >= config.idle_threshold_seconds:
@@ -68,9 +72,10 @@ class EventClassifier:
                         task_outputs=task_outputs,
                         prompt=prompt,
                     )
+                messages = self._build_messages(config, prompt, screenshot_path)
                 raw_result = self.client.chat(
                     config.classifier_model,
-                    [{"role": "user", "content": prompt}],
+                    messages,
                     json_mode=True,
                 ).strip()
             except LLMError:
@@ -154,6 +159,19 @@ class EventClassifier:
             'Return JSON only, for example: {"activity_path":"coding/terminal","task_path":"example-task"}'
         )
         return "\n\n".join(sections)
+
+    def _build_messages(
+        self, config: AppConfig, prompt: str, screenshot_path: str | None
+    ) -> list[dict]:
+        if screenshot_path and config.screenshot.enabled:
+            path = Path(screenshot_path)
+            if path.exists():
+                try:
+                    image_data = base64.b64encode(path.read_bytes()).decode("utf-8")
+                    return [build_vision_message(prompt, image_data)]
+                except Exception:
+                    pass
+        return [{"role": "user", "content": prompt}]
 
     def _state_summary(self, state: ProviderState) -> str:
         if state.screen_locked:

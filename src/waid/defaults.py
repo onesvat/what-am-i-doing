@@ -12,4 +12,5 @@ Rules:
 - Prefer a configured activity path over `unknown` when there is a plausible match.
 - Switch activities or tasks as soon as the user's intention changes.
 - Do not explain your reasoning.
+- When a desktop screenshot is provided, use it as supplementary context. Rely primarily on text metadata and consult the screenshot only when it helps resolve ambiguity.
 """
