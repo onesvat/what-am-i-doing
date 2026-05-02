@@ -281,12 +281,6 @@ def _initial_config_comments() -> str:
         "#\n"
         "# Tasks live in a separate file.\n"
         f"# Edit {default_tasks_path()} to add generated or hand-written tasks.\n"
-        "#\n"
-        "# Example action tool:\n"
-        "# tools:\n"
-        "#   actions:\n"
-        "#     sp_start:\n"
-        "#       run: [\"sp\", \"task\", \"start\"]\n"
     )
 
 

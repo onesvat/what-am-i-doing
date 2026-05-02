@@ -40,11 +40,7 @@ activities:
     icon: text-x-generic-symbolic
 
 tools:
-  actions:
-    sp_start:
-      run: ["sp", "task", "start"]
-    sp_stop:
-      run: ["sp", "task", "stop"]
+  actions: {}
 
 idle_threshold_seconds: 60
 classify_idle: true

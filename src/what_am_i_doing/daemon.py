@@ -18,6 +18,7 @@ from .config import (
     load_tasks,
 )
 from .constants import (
+    DEBOUNCE_SECONDS,
     IDLE_ICON,
     PANEL_KIND_CLASSIFIED,
     PANEL_KIND_DISCONNECTED,
@@ -87,6 +88,9 @@ class ActivityDaemon:
         self.command_runner = CommandRunner(self.debug)
         self.provider = GnomeProvider()
         self.decision_cache: dict[str, ClassificationResult] = {}
+        self._debounce_task: asyncio.Task | None = None
+        self._pending_snapshot: ProviderSnapshot | None = None
+        self._debounce_lock = asyncio.Lock()
         self.runtime = self._load_runtime_state()
         self._refresh_lock = asyncio.Lock()
         self.dbus_service = DaemonDBusService(
@@ -191,8 +195,33 @@ class ActivityDaemon:
     async def handle_snapshot(self, snapshot: ProviderSnapshot) -> None:
         if not self.runtime.tracking_enabled:
             return
-        self.runtime.last_snapshot = snapshot
         self._log_raw_event(snapshot)
+        async with self._debounce_lock:
+            self._pending_snapshot = snapshot
+            if self._debounce_task is not None:
+                self._debounce_task.cancel()
+                try:
+                    await self._debounce_task
+                except asyncio.CancelledError:
+                    pass
+            self._debounce_task = asyncio.create_task(self._process_after_debounce())
+
+    async def _process_after_debounce(self) -> None:
+        try:
+            await asyncio.sleep(DEBOUNCE_SECONDS)
+        except asyncio.CancelledError:
+            return
+        async with self._debounce_lock:
+            snapshot = self._pending_snapshot
+            self._pending_snapshot = None
+            self._debounce_task = None
+        if snapshot is not None:
+            await self._process_snapshot(snapshot)
+
+    async def _process_snapshot(self, snapshot: ProviderSnapshot) -> None:
+        if not self.runtime.tracking_enabled:
+            return
+        self.runtime.last_snapshot = snapshot
         state = snapshot.state
         previous_result = self._current_result()
         cache_key = self._decision_key(snapshot, previous_result)

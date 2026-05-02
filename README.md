@@ -138,10 +138,8 @@ activities:
 
 tools:
   actions:
-    sp_start:
-      run: ["sp", "task", "start"]
-    sp_stop:
-      run: ["sp", "task", "stop"]
+    example_tool:
+      run: ["echo", "activity-changed"]
 ```
 
 `tasks.yaml` is a plain YAML list:
@@ -150,35 +148,11 @@ tools:
 - path: dailies
   description: General work fallback when no more specific task matches
   icon: folder-symbolic
-  actions:
-    - tool: sp_start
-      args: ["123"]
 
 - path: fix-waid
   description: Terminal, editor, docs, and chats related to fixing waid
   icon: folder-symbolic
-  actions:
-    - tool: sp_start
-      args: ["456"]
 ```
-
-## Generating Tasks
-
-The included helper script generates `tasks.yaml` from today's Super Productivity tasks:
-
-```bash
-python3 sp-generate-tasks.py
-waid refresh
-```
-
-The script:
-
-- reads `sp task list --today --json`
-- writes `~/.config/waid/tasks.yaml`
-- keeps Turkish-safe slugs
-- generates short task descriptions through the configured LLM
-
-The default classifier prompt already covers the general activity/task logic. Use `classifier.instructions` only for user-specific overrides.
 
 ## GNOME Panel Behavior
 
