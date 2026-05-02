@@ -91,6 +91,7 @@ class ActivityDaemon:
         self._debounce_task: asyncio.Task | None = None
         self._pending_snapshot: ProviderSnapshot | None = None
         self._debounce_lock = asyncio.Lock()
+        self._sync_task: asyncio.Task | None = None
         self.runtime = self._load_runtime_state()
         self._refresh_lock = asyncio.Lock()
         self.dbus_service = DaemonDBusService(
@@ -181,6 +182,8 @@ class ActivityDaemon:
             await self._publish_disconnected(reason="startup")
         else:
             await self._publish_paused()
+        if self.config.sync.command:
+            self._sync_task = asyncio.create_task(self._sync_loop())
         await self._provider_loop()
 
     async def _provider_loop(self) -> None:
@@ -191,6 +194,27 @@ class ActivityDaemon:
                 self.debug.log("provider_disconnected", error=str(exc))
                 await self._publish_disconnected(reason=str(exc))
                 await asyncio.sleep(1)
+
+    async def _sync_loop(self) -> None:
+        command = self.config.sync.command
+        if not command:
+            return
+        while True:
+            await asyncio.sleep(self.config.sync.interval_minutes * 60)
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    *command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                result = await process.wait()
+                if result == 0:
+                    self.debug.log("sync_success", exit_code=result)
+                    await self.reload_config()
+                else:
+                    self.debug.log("sync_failed", exit_code=result)
+            except Exception as exc:
+                self.debug.log("sync_error", error=str(exc))
 
     async def handle_snapshot(self, snapshot: ProviderSnapshot) -> None:
         if not self.runtime.tracking_enabled:
@@ -259,6 +283,8 @@ class ActivityDaemon:
 
         result = self._apply_task_pin(result, state)
 
+        task_id = self.runtime.catalog.task_path_to_id(result.task_path) if result.task_path else None
+
         self._cleanup_screenshots()
 
         if self._same_result(previous_result, result):
@@ -272,10 +298,10 @@ class ActivityDaemon:
             await self._publish_idle(state)
             return
 
-        await self._publish_classified(result, state)
+        await self._publish_classified(result, state, task_id)
 
     async def _publish_classified(
-        self, result: ClassificationResult, state: Any
+        self, result: ClassificationResult, state: Any, task_id: str | None
     ) -> None:
         previous_result = self._current_result()
         now = utcnow()
@@ -287,6 +313,7 @@ class ActivityDaemon:
             revision=self.runtime.panel_state.revision + 1,
             path=result.activity_path,
             task_path=result.task_path,
+            task_id=task_id,
             top_level_id=top_level,
             top_level_label=top_level,
             icon_name=activity_entry.icon or "applications-system-symbolic",
