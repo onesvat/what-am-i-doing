@@ -126,10 +126,10 @@ def build_task_entries(tasks: list[dict], *, project_map: dict[str, str], config
         path = uniquify_path(base_path, task_id, used_paths)
         entries.append(
             {
+                "id": task_id,
                 "path": path,
                 "description": describe_task(task, project_name=project_name, config=config, llm=llm),
                 "icon": "folder-symbolic",
-                # "actions": [{"tool": "sp_start", "args": [task_id]}],
             }
         )
     return entries
