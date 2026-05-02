@@ -56,12 +56,16 @@ The current config format is versioned and intentionally minimal.
 Important expectations:
 
 - `model` is shared by generator and classifier
+- `screenshot.enabled` controls whether screenshots are captured and used for classification
+- `screenshot.max_retention` controls how many screenshots to keep before cleanup
 - `generator.categories` are broad user hints, not the final runtime taxonomy
 - `tools.context` outputs are interpolated into `generator.instructions`
 - `classifier.params` are interpolated into `classifier.instructions`
 - `tools.actions` is the only action registry the generated taxonomy may reference
 
 Do not reintroduce old top-level sections like provider, state_dir, extension toggles, or separate model blocks unless there is a strong reason.
+
+- Data lives in `~/.waid/` (config, state, screenshots, tasks).
 
 ## Runtime Conventions
 
@@ -97,6 +101,8 @@ Do not make this flow harder without a good reason.
 - Do not move classification logic into the extension.
 - Keep D-Bus names under the `org.waid.*` namespace.
 - If changing D-Bus contracts, update both the Python daemon and the extension together.
+- Screenshots are captured by the extension via GNOME Shell Screenshot API and saved to `~/.waid/screenshots/`.
+- The daemon reads screenshots, base64-encodes them, and passes them to the vision model when `screenshot.enabled` is true.
 
 ## Testing
 
