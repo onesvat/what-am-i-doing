@@ -14,6 +14,7 @@ if str(SRC) not in sys.path:
 from waid.config import (
     AppConfig,
     ScreenshotConfig,
+    SyncConfig,
     build_minimal_config,
     build_selection_catalog,
     load_config,
@@ -160,6 +161,29 @@ class ConfigTest(unittest.TestCase):
         )
         self.assertFalse(config.screenshot.enabled)
         self.assertEqual(10, config.screenshot.max_retention)
+
+    def test_sync_config_defaults(self) -> None:
+        config = AppConfig.model_validate(
+            {
+                "version": 2,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "classifier": {"instructions": ""},
+            }
+        )
+        self.assertEqual([], config.sync.command)
+        self.assertEqual(5, config.sync.interval_minutes)
+
+    def test_sync_config_custom(self) -> None:
+        config = AppConfig.model_validate(
+            {
+                "version": 2,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "classifier": {"instructions": ""},
+                "sync": {"command": ["python3", "sp-generate-tasks.py"], "interval_minutes": 10},
+            }
+        )
+        self.assertEqual(["python3", "sp-generate-tasks.py"], config.sync.command)
+        self.assertEqual(10, config.sync.interval_minutes)
 
     def test_builtin_activity_catalog_matches_expected_paths(self) -> None:
         self.assertEqual(

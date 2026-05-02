@@ -48,3 +48,11 @@ tools:
 
 idle_threshold_seconds: 60
 classify_idle: true
+
+screenshot:
+  enabled: true
+  max_retention: 50
+
+sync:
+  command: []  # e.g. ["python3", "sp-generate-tasks.py"]
+  interval_minutes: 5

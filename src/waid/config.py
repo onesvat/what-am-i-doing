@@ -48,6 +48,13 @@ class ClassifierConfig(BaseModel):
     model: ModelConfig | None = None
 
 
+class SyncConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    command: list[str] = Field(default_factory=list)
+    interval_minutes: int = 5
+
+
 class ScreenshotConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -68,6 +75,7 @@ class AppConfig(BaseModel):
     idle_threshold_seconds: int = 60
     classify_idle: bool = True
     screenshot: ScreenshotConfig = Field(default_factory=ScreenshotConfig)
+    sync: SyncConfig = Field(default_factory=SyncConfig)
 
     @model_validator(mode="after")
     def validate_config(self) -> "AppConfig":

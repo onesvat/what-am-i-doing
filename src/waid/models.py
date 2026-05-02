@@ -43,6 +43,7 @@ class CatalogEntry(BaseModel):
     path: str
     description: str = ""
     icon: str | None = None
+    id: str | None = None
     actions: list[ToolCall] = Field(default_factory=list)
 
     @field_validator("path")
@@ -174,6 +175,7 @@ class PanelStateRecord(BaseModel):
     icon_name: str
     path: str | None = None
     task_path: str | None = None
+    task_id: str | None = None
     published_at: datetime
     catalog_hash: str | None = None
 
@@ -189,7 +191,7 @@ class PanelStateRecord(BaseModel):
                     "classified panel state must include top-level and path"
                 )
             return self
-        if self.path is not None or self.task_path is not None:
+        if self.path is not None or self.task_path is not None or self.task_id is not None:
             raise ValueError("non-classified panel state cannot include classified paths")
         if self.top_level_id is not None or self.top_level_label is not None:
             raise ValueError(
@@ -209,6 +211,7 @@ class PanelStateRecord(BaseModel):
         published_at: datetime,
         catalog_hash: str | None,
         task_path: str | None = None,
+        task_id: str | None = None,
     ) -> "PanelStateRecord":
         return cls(
             revision=revision,
@@ -218,6 +221,7 @@ class PanelStateRecord(BaseModel):
             icon_name=icon_name,
             path=path,
             task_path=task_path,
+            task_id=task_id,
             published_at=published_at,
             catalog_hash=catalog_hash,
         )
@@ -321,6 +325,7 @@ class UIStateRecord(BaseModel):
     icon_name: str
     path: str | None = None
     task_path: str | None = None
+    task_id: str | None = None
     published_at: datetime
     catalog_hash: str | None = None
     tracking_enabled: bool = True
@@ -344,6 +349,7 @@ class UIStateRecord(BaseModel):
             icon_name=panel_state.icon_name,
             path=panel_state.path,
             task_path=panel_state.task_path,
+            task_id=panel_state.task_id,
             published_at=panel_state.published_at,
             catalog_hash=panel_state.catalog_hash,
             tracking_enabled=tracking_enabled,
@@ -364,6 +370,7 @@ class UIStateRecord(BaseModel):
                     "icon_name",
                     "path",
                     "task_path",
+                    "task_id",
                     "published_at",
                     "catalog_hash",
                 },
@@ -380,6 +387,7 @@ class SpanRecord(BaseModel):
     path: str
     top_level: str
     task_path: str | None = None
+    task_id: str | None = None
     started_at: datetime
     ended_at: datetime
     duration_seconds: float
