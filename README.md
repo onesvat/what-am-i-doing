@@ -8,8 +8,8 @@ It watches the focused window, classifies the current work into one activity plu
 
 `waid` uses two sources of truth:
 
-1. `~/.config/waid/config.yaml` for model settings, built-in activity filtering, custom activities, and action tools
-2. `~/.config/waid/tasks.yaml` for generated or hand-written task entries
+1. `~/.waid/config.yaml` for model settings, built-in activity filtering, custom activities, and action tools
+2. `~/.waid/tasks.yaml` for generated or hand-written task entries
 
 At runtime:
 
@@ -48,12 +48,12 @@ Run:
 waid init
 ```
 
-This writes `~/.config/waid/config.yaml`.
+This writes `~/.waid/config.yaml`.
 
 Then edit:
 
-- `~/.config/waid/config.yaml`
-- `~/.config/waid/tasks.yaml` if you want task-level matching
+- `~/.waid/config.yaml`
+- `~/.waid/tasks.yaml` if you want task-level matching
 
 You can also start from [config.example.yaml](/home/onur/Code/what-am-i-doing/config.example.yaml).
 
@@ -166,14 +166,14 @@ The extension does not build its own menu model. It renders rows produced by the
 
 ## State Files
 
-Inside `~/.local/state/waid/`:
+Inside `~/.waid/`:
 
-- `raw-events.jsonl` records raw GNOME window events
-- `activity.jsonl` records activity and task changes
-- `status.json` stores the current UI payload used by the extension
-- `spans.jsonl` stores closed spans for stats
-- `tracking.json` stores paused/resumed state
-- `debug.jsonl` stores debug events when `WAID_DEBUG=1`
+- `state/raw-events.jsonl` records raw GNOME window events
+- `state/activity.jsonl` records activity and task changes
+- `state/status.json` stores the current UI payload used by the extension
+- `state/spans.jsonl` stores closed spans for stats
+- `state/tracking.json` stores paused/resumed state
+- `state/debug.jsonl` stores debug events when `WAID_DEBUG=1`
 
 ## Notes
 

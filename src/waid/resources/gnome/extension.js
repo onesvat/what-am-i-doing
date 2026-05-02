@@ -26,9 +26,10 @@ const UNCLASSIFIED_ICON = 'help-about-symbolic';
 const DISCONNECTED_ICON = 'network-offline-symbolic';
 const PAUSED_ICON = 'media-playback-pause-symbolic';
 
-const STATE_DIR = GLib.build_filenamev([GLib.get_home_dir(), '.local', 'state', 'waid']);
+const WAID_DIR = GLib.build_filenamev([GLib.get_home_dir(), '.waid']);
+const STATE_DIR = GLib.build_filenamev([WAID_DIR, 'state']);
 const STATUS_FILE = GLib.build_filenamev([STATE_DIR, 'status.json']);
-const CONFIG_FILE = GLib.build_filenamev([GLib.get_home_dir(), '.config', 'waid', 'config.yaml']);
+const CONFIG_FILE = GLib.build_filenamev([WAID_DIR, 'config.yaml']);
 const REPORT_INTERVAL_SECONDS = 30;
 
 const TRACKER_IFACE = `
