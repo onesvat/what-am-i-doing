@@ -55,10 +55,10 @@ class EventClassifier:
             prompt = base_prompt
             if attempt > 0:
                 prompt += (
-                    "\n\nYour previous answer was invalid.\n"
+                    "\n\nPrevious answer invalid.\n"
                     f"Attempt: {attempt}\n"
                     f"Previous answer: {last_invalid}\n"
-                    "Return valid JSON with an allowed activity_path and optional task_path."
+                    "Return valid JSON with an allowed `activity_path` and optional `task_path`."
                 )
             try:
                 if self.debug is not None:
@@ -147,7 +147,7 @@ class EventClassifier:
         if rendered_instructions:
             sections.append("User instructions:\n" + rendered_instructions)
         sections.append(
-            'Return JSON only, for example: {"activity_path":"coding/terminal","task_path":"example-task"}'
+            'Example JSON: {"activity_path":"coding/terminal","task_path":"example-task"}'
         )
         return "\n\n".join(sections)
 
