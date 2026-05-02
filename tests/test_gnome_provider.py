@@ -11,7 +11,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from what_am_i_doing.providers.gnome import GnomeProvider
+from waid.providers.gnome import GnomeProvider
 
 
 class GnomeProviderTest(unittest.IsolatedAsyncioTestCase):

@@ -15,8 +15,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from what_am_i_doing.config import default_config_path, default_tasks_path, load_config
-from what_am_i_doing.llm import OpenAICompatibleClient
+from waid.config import default_config_path, default_tasks_path, load_config
+from waid.llm import OpenAICompatibleClient
 
 import yaml
 

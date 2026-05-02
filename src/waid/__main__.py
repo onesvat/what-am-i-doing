@@ -28,6 +28,7 @@ from .constants import (
     EXTENSION_DIR,
     EXTENSION_UUID,
     LEGACY_EXTENSION_UUIDS,
+    SCREENSHOTS_DIR,
     SERVICE_NAME,
 )
 from .daemon import ActivityDaemon
@@ -40,7 +41,7 @@ from .dbus_service import (
 from .models import AppPaths
 from .resources import copy_resource_tree
 from .service import install_unit, run_journalctl, run_systemctl, unit_path
-from .storage import load_spans, load_status, load_ui_state
+from .storage import load_spans, load_status, load_ui_state, migrate_legacy_dirs
 from .wizard import run_init_wizard
 
 
@@ -294,8 +295,10 @@ def _run_init(config_path: str, *, force: bool) -> None:
         model_name=answers.model_name,
         api_key_env=answers.api_key_env,
     )
+    migrate_legacy_dirs()
     path.parent.mkdir(parents=True, exist_ok=True)
     AppPaths.default().state_dir.mkdir(parents=True, exist_ok=True)
+    SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
     path.write_text(render_config(config) + _initial_config_comments(), encoding="utf-8")
     print(f"wrote config: {path}")
     print("next:")

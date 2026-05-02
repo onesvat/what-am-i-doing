@@ -11,8 +11,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from what_am_i_doing.dbus_service import DaemonInterface, _disconnect_bus
-from what_am_i_doing.models import (
+from waid.dbus_service import DaemonInterface, _disconnect_bus
+from waid.models import (
     DisplayRow,
     PanelStateRecord,
     RefreshResult,

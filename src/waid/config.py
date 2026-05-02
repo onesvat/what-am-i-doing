@@ -198,7 +198,7 @@ def render_config(config: AppConfig) -> str:
         "# Built-in activities live in the app.\n"
         "# Use allow_activities/block_activities to filter built-ins.\n"
         "# Use activities for custom activity definitions.\n"
-        "# Tasks live in ~/.config/waid/tasks.yaml.\n\n"
+        "# Tasks live in ~/.waid/tasks.yaml.\n\n"
     )
     return header + dump_yaml(payload)
 

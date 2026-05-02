@@ -10,7 +10,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from what_am_i_doing.llm import OpenAICompatibleClient
+from waid.llm import OpenAICompatibleClient
 
 
 class LLMClientTest(unittest.TestCase):

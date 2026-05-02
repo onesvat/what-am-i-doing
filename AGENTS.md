@@ -8,10 +8,10 @@ This file describes how to work in this repository.
 
 Main pieces:
 
-- Python daemon in [src/what_am_i_doing](/home/onur/.openclaw/workspace-coding/code/what-am-i-doing/src/what_am_i_doing)
-- GNOME Shell extension in [extensions/gnome](/home/onur/.openclaw/workspace-coding/code/what-am-i-doing/extensions/gnome)
-- Packaged runtime resources in [resources](/home/onur/.openclaw/workspace-coding/code/what-am-i-doing/src/what_am_i_doing/resources)
-- Tests in [tests](/home/onur/.openclaw/workspace-coding/code/what-am-i-doing/tests)
+- Python daemon in [src/waid](src/waid)
+- GNOME Shell extension in [extensions/gnome](extensions/gnome)
+- Packaged runtime resources in [resources](src/waid/resources)
+- Tests in [tests](tests)
 
 User-facing product name:
 
@@ -19,9 +19,9 @@ User-facing product name:
 
 Python package name:
 
-- `what_am_i_doing`
+- `waid`
 
-Keep that split consistent. Do not rename the Python package casually.
+Keep these consistent.
 
 ## Product Rules
 
@@ -125,7 +125,7 @@ If you change:
 
 ## Documentation
 
-- Keep [README.md](/home/onur/.openclaw/workspace-coding/code/what-am-i-doing/README.md) user-friendly.
+- Keep [README.md](README.md) user-friendly.
 - README should explain setup, first run, config basics, and normal commands.
 - Keep internal implementation detail in code or this file unless users actually need it.
 - Update `config.example.yaml` when config behavior changes.

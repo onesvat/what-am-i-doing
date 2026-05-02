@@ -5,14 +5,14 @@ from pathlib import Path
 
 
 def resource_text(*parts: str) -> str:
-    resource = files("what_am_i_doing")
+    resource = files("waid")
     for part in ("resources", *parts):
         resource = resource.joinpath(part)
     return resource.read_text(encoding="utf-8")
 
 
 def copy_resource_tree(*parts: str, destination: Path) -> None:
-    source = files("what_am_i_doing")
+    source = files("waid")
     for part in ("resources", *parts):
         source = source.joinpath(part)
     destination.mkdir(parents=True, exist_ok=True)

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
-from .constants import PANEL_KIND_CLASSIFIED, UNKNOWN_PATH
+from .constants import LEGACY_CONFIG_DIR, LEGACY_STATE_DIR, PANEL_KIND_CLASSIFIED, UNKNOWN_PATH
 from .models import AppPaths, PanelStateRecord, SpanRecord, UIStateRecord, utcnow
 
 
@@ -142,3 +143,29 @@ def load_task_pins(path: Path) -> dict[str, str]:
 
 def save_task_pins(path: Path, pins: dict[str, str]) -> None:
     path.write_text(json.dumps(pins, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def migrate_legacy_dirs() -> None:
+    from .constants import WAID_DIR
+
+    if WAID_DIR.exists():
+        return
+
+    migrated = False
+
+    if LEGACY_CONFIG_DIR.exists():
+        for item in LEGACY_CONFIG_DIR.iterdir():
+            dest = WAID_DIR / item.name
+            if not dest.exists():
+                WAID_DIR.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(item, dest)
+                migrated = True
+
+    if LEGACY_STATE_DIR.exists():
+        dest_state = WAID_DIR / "state"
+        dest_state.mkdir(parents=True, exist_ok=True)
+        for item in LEGACY_STATE_DIR.iterdir():
+            dest = dest_state / item.name
+            if not dest.exists():
+                shutil.copy2(item, dest)
+                migrated = True

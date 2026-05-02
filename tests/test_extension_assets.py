@@ -12,7 +12,7 @@ if str(SRC) not in sys.path:
 
 class ExtensionAssetsTest(unittest.TestCase):
     def test_extension_strings_match_catalog_terms(self) -> None:
-        source = (ROOT / "src/what_am_i_doing/resources/gnome/extension.js").read_text(
+        source = (ROOT / "src/waid/resources/gnome/extension.js").read_text(
             encoding="utf-8"
         )
         self.assertIn("Reload Catalog", source)

@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
-waid = "what_am_i_doing.__main__:main"
+waid = "waid.__main__:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -27,7 +27,7 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-what_am_i_doing = [
+waid = [
   "resources/gnome/*",
   "resources/systemd/*",
 ]

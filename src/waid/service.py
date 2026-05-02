@@ -21,7 +21,7 @@ def render_unit(config_path: Path | None = None) -> str:
         for part in (
             sys.executable,
             "-m",
-            "what_am_i_doing",
+            "waid",
             "--config",
             str(effective_config),
             "run",

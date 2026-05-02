@@ -10,10 +10,10 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from what_am_i_doing.classifier import EventClassifier
-from what_am_i_doing.config import AppConfig
-from what_am_i_doing.constants import UNKNOWN_PATH
-from what_am_i_doing.models import (
+from waid.classifier import EventClassifier
+from waid.config import AppConfig
+from waid.constants import UNKNOWN_PATH
+from waid.models import (
     ClassificationResult,
     ProviderState,
     SelectionCatalog,

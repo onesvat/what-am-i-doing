@@ -11,8 +11,8 @@ Goal: tighten the waid classifier through small, auditable changes — without p
 
 - `~/.local/state/waid/debug.jsonl` — JSONL emitted by `DebugLogger` (only while `WAID_DEBUG=1` is set). Contains `classifier_attempt` (with full prompt) and `classifier_result` events.
 - Source of truth for prompt/catalog:
-  - `src/what_am_i_doing/defaults.py` — `CLASSIFIER_BASE_PROMPT`, the shared rules.
-  - `src/what_am_i_doing/activity_catalog.py` — built-in activity paths and their descriptions.
+  - `src/waid/defaults.py` — `CLASSIFIER_BASE_PROMPT`, the shared rules.
+  - `src/waid/activity_catalog.py` — built-in activity paths and their descriptions.
   - `~/.config/waid/tasks.yaml` — task entries.
 
 ## Step 1 — Read

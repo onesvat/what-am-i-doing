@@ -4,10 +4,13 @@ from pathlib import Path
 
 
 APP_NAME = "waid"
-CONFIG_DIR = Path.home() / ".config" / APP_NAME
-CONFIG_PATH = CONFIG_DIR / "config.yaml"
-TASKS_PATH = CONFIG_DIR / "tasks.yaml"
-STATE_DIR = Path.home() / ".local" / "state" / APP_NAME
+WAID_DIR = Path.home() / ".waid"
+CONFIG_PATH = WAID_DIR / "config.yaml"
+TASKS_PATH = WAID_DIR / "tasks.yaml"
+STATE_DIR = WAID_DIR / "state"
+SCREENSHOTS_DIR = WAID_DIR / "screenshots"
+LEGACY_CONFIG_DIR = Path.home() / ".config" / APP_NAME
+LEGACY_STATE_DIR = Path.home() / ".local" / "state" / APP_NAME
 SYSTEMD_USER_DIR = Path.home() / ".config" / "systemd" / "user"
 SERVICE_NAME = f"{APP_NAME}.service"
 EXTENSION_UUID = f"{APP_NAME}@onesvat.github.io"

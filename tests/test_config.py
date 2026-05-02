@@ -11,15 +11,15 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from what_am_i_doing.config import (
+from waid.config import (
     AppConfig,
     build_minimal_config,
     build_selection_catalog,
     load_config,
     load_tasks,
 )
-from what_am_i_doing.activity_catalog import builtin_activity_entries
-from what_am_i_doing.models import CatalogEntry
+from waid.activity_catalog import builtin_activity_entries
+from waid.models import CatalogEntry
 
 
 class ConfigTest(unittest.TestCase):

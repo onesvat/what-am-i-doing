@@ -12,9 +12,9 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from what_am_i_doing.constants import DEBOUNCE_SECONDS
-from what_am_i_doing.daemon import describe_catalog_reload
-from what_am_i_doing.models import (
+from waid.constants import DEBOUNCE_SECONDS
+from waid.daemon import describe_catalog_reload
+from waid.models import (
     ProviderSnapshot,
     ProviderState,
     WindowInfo,
@@ -45,16 +45,16 @@ class DaemonTextTest(unittest.TestCase):
 class DaemonDebounceTest(unittest.TestCase):
     def test_rapid_snapshots_are_debounced(self) -> None:
         async def run_test() -> None:
-            with patch("what_am_i_doing.daemon.GnomeProvider"):
-                with patch("what_am_i_doing.daemon.DaemonDBusService"):
-                    with patch("what_am_i_doing.daemon.load_config") as mock_load:
-                        with patch("what_am_i_doing.daemon.load_tasks") as mock_tasks:
-                            with patch("what_am_i_doing.daemon.ensure_state_dir"):
+            with patch("waid.daemon.GnomeProvider"):
+                with patch("waid.daemon.DaemonDBusService"):
+                    with patch("waid.daemon.load_config") as mock_load:
+                        with patch("waid.daemon.load_tasks") as mock_tasks:
+                            with patch("waid.daemon.ensure_state_dir"):
                                 with patch(
-                                    "what_am_i_doing.daemon.load_status"
+                                    "waid.daemon.load_status"
                                 ) as mock_status:
-                                    from what_am_i_doing.daemon import ActivityDaemon
-                                    from what_am_i_doing.config import AppConfig
+                                    from waid.daemon import ActivityDaemon
+                                    from waid.config import AppConfig
 
                                     mock_load.return_value = MagicMock(
                                         spec=AppConfig,

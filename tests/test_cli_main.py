@@ -10,7 +10,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from what_am_i_doing.__main__ import _run_init, build_parser
+from waid.__main__ import _run_init, build_parser
 
 
 class MainCliTest(unittest.TestCase):
