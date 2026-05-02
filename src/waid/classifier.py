@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from base64 import b64encode
 
 from pathlib import Path
 
@@ -9,8 +10,7 @@ from .config import AppConfig
 from .constants import UNKNOWN_PATH
 from .debug import DebugLogger
 from .defaults import CLASSIFIER_BASE_PROMPT
-from .llm import LLMError, OpenAICompatibleClient
-from .ocr import screenshot_to_text
+from .llm import LLMError, OpenAICompatibleClient, build_vision_message
 from .models import (
     ClassificationResult,
     ProviderState,
@@ -58,9 +58,10 @@ class EventClassifier:
             task_outputs,
         )
         base_messages = self._build_messages(config, base_prompt, screenshot_path)
-        prompt_content = base_messages[0].get("content", base_prompt)
         prompt_hash = hashlib.sha256(
-            prompt_content.encode("utf-8", errors="replace")
+            json.dumps(base_messages, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
         ).hexdigest()
         if prompt_hash == self._last_prompt_hash and self._last_result is not None:
             if self.debug is not None:
@@ -176,9 +177,11 @@ class EventClassifier:
         if screenshot_path and config.screenshot.enabled:
             path = Path(screenshot_path)
             if path.exists():
-                ocr_text = screenshot_to_text(path)
-                if ocr_text:
-                    prompt = prompt + "\n\nScreenshot text (OCR):\n" + ocr_text
+                try:
+                    image_base64 = b64encode(path.read_bytes()).decode("ascii")
+                except OSError:
+                    return [{"role": "user", "content": prompt}]
+                return [build_vision_message(prompt, image_base64)]
         return [{"role": "user", "content": prompt}]
 
     def _state_summary(self, state: ProviderState) -> str:

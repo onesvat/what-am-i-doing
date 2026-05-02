@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from base64 import b64encode
 import sys
 import unittest
+from tempfile import TemporaryDirectory
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,10 +27,10 @@ from waid.models import (
 class FakeClient:
     def __init__(self, responses: list[str]) -> None:
         self.responses = responses
-        self.calls: list[str] = []
+        self.calls: list[list[dict[str, Any]]] = []
 
     def chat(self, _model, messages, *, json_mode=False, max_tokens=None) -> str:
-        self.calls.append(messages[0]["content"])
+        self.calls.append(messages)
         return self.responses.pop(0)
 
 
@@ -66,7 +68,7 @@ class ClassifierTest(unittest.TestCase):
             result,
         )
         self.assertEqual(2, len(client.calls))
-        self.assertIn("Prefer project-a", client.calls[0])
+        self.assertIn("Prefer project-a", client.calls[0][0]["content"])
 
     def test_idle_detection_short_circuits_llm(self) -> None:
         catalog = SelectionCatalog.model_validate(
@@ -135,13 +137,54 @@ class ClassifierTest(unittest.TestCase):
             ClassificationResult(activity_path="coding/ide", task_path="project-a"),
             result,
         )
-        prompt = client.calls[0]
+        prompt = client.calls[0][0]["content"]
         self.assertIn("Allowed activity_path values:", prompt)
         self.assertIn("- coding/ide: Main work stream", prompt)
         self.assertIn("- browsing/other: Reading", prompt)
         self.assertIn("- project-a: Specific task context", prompt)
         self.assertIn(f"- {UNKNOWN_PATH}", prompt)
         self.assertIn("idle", prompt)
+
+    def test_screenshot_path_is_sent_as_vision_message(self) -> None:
+        catalog = SelectionCatalog.model_validate(
+            {"activity_entries": [{"path": "coding/ide", "description": "Work"}]}
+        )
+        config = AppConfig.model_validate(
+            {
+                "version": 2,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "classifier": {"instructions": ""},
+                "allow_activities": ["coding/ide"],
+            }
+        )
+        state = ProviderState(timestamp=utcnow())
+        client = FakeClient(['{"activity_path":"coding/ide","task_path":null}'])
+        classifier = EventClassifier(client)
+
+        with TemporaryDirectory() as temp_dir:
+            screenshot_path = Path(temp_dir) / "shot.png"
+            screenshot_bytes = b"png-bytes"
+            screenshot_path.write_bytes(screenshot_bytes)
+
+            result = asyncio.run(
+                classifier.classify(
+                    config,
+                    state,
+                    catalog,
+                    None,
+                    screenshot_path=str(screenshot_path),
+                )
+            )
+
+        self.assertEqual(ClassificationResult(activity_path="coding/ide", task_path=None), result)
+        content = client.calls[0][0]["content"]
+        self.assertIsInstance(content, list)
+        self.assertEqual("text", content[0]["type"])
+        self.assertEqual("image_url", content[1]["type"])
+        self.assertEqual(
+            f"data:image/png;base64,{b64encode(screenshot_bytes).decode('ascii')}",
+            content[1]["image_url"]["url"],
+        )
 
 
 if __name__ == "__main__":
