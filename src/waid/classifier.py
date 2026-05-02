@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import base64
+import hashlib
 import json
 
 from pathlib import Path
@@ -9,7 +9,8 @@ from .config import AppConfig
 from .constants import UNKNOWN_PATH
 from .debug import DebugLogger
 from .defaults import CLASSIFIER_BASE_PROMPT
-from .llm import LLMError, OpenAICompatibleClient, build_vision_message
+from .llm import LLMError, OpenAICompatibleClient
+from .ocr import screenshot_to_text
 from .models import (
     ClassificationResult,
     ProviderState,
@@ -24,6 +25,12 @@ class EventClassifier:
     ) -> None:
         self.client = client
         self.debug = debug
+        self._last_prompt_hash: str | None = None
+        self._last_result: ClassificationResult | None = None
+
+    def clear_cache(self) -> None:
+        self._last_prompt_hash = None
+        self._last_result = None
 
     async def classify(
         self,
@@ -50,6 +57,16 @@ class EventClassifier:
             activity_outputs,
             task_outputs,
         )
+        base_messages = self._build_messages(config, base_prompt, screenshot_path)
+        prompt_content = base_messages[0].get("content", base_prompt)
+        prompt_hash = hashlib.sha256(
+            prompt_content.encode("utf-8", errors="replace")
+        ).hexdigest()
+        if prompt_hash == self._last_prompt_hash and self._last_result is not None:
+            if self.debug is not None:
+                self.debug.log("classifier_prompt_cache_hit", prompt_hash=prompt_hash)
+            return self._last_result
+
         last_invalid = "<empty>"
         for attempt in range(config.classifier.retry_count + 1):
             prompt = base_prompt
@@ -72,7 +89,7 @@ class EventClassifier:
                         task_outputs=task_outputs,
                         prompt=prompt,
                     )
-                messages = self._build_messages(config, prompt, screenshot_path)
+                messages = base_messages if attempt == 0 else self._build_messages(config, prompt, screenshot_path)
                 raw_result = self.client.chat(
                     config.classifier_model,
                     messages,
@@ -84,6 +101,8 @@ class EventClassifier:
                 self.debug.log("classifier_result", attempt=attempt, result=raw_result)
             parsed = self._parse_result(raw_result, activity_outputs, task_outputs)
             if parsed is not None:
+                self._last_prompt_hash = prompt_hash
+                self._last_result = parsed
                 return parsed
             last_invalid = raw_result or "<empty>"
         if self.debug is not None:
@@ -157,11 +176,9 @@ class EventClassifier:
         if screenshot_path and config.screenshot.enabled:
             path = Path(screenshot_path)
             if path.exists():
-                try:
-                    image_data = base64.b64encode(path.read_bytes()).decode("utf-8")
-                    return [build_vision_message(prompt, image_data)]
-                except Exception:
-                    pass
+                ocr_text = screenshot_to_text(path)
+                if ocr_text:
+                    prompt = prompt + "\n\nScreenshot text (OCR):\n" + ocr_text
         return [{"role": "user", "content": prompt}]
 
     def _state_summary(self, state: ProviderState) -> str:

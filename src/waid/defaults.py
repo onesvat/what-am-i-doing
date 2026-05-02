@@ -16,4 +16,7 @@ Screenshot guidance:
 - If visual evidence contradicts metadata, trust the screenshot.
 - If screenshot contains adult content, set `activity_path` to `adult`.
 - If screenshot is unreadable, fall back to metadata.
+
+Adult content detection:
+- If the window title or URL contains clear indicators of adult/pornographic content (explicit site names, adult video titles, cam sites, hentai), set `activity_path` to `adult` regardless of screenshot availability.
 """

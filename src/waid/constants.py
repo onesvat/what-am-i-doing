@@ -47,4 +47,4 @@ UNCLASSIFIED_ICON = "help-about-symbolic"
 DISCONNECTED_ICON = "network-offline-symbolic"
 PAUSED_ICON = "media-playback-pause-symbolic"
 DEBUG_ENV_VAR = "WAID_DEBUG"
-DEBOUNCE_SECONDS = 1.0
+DEBOUNCE_SECONDS = 0

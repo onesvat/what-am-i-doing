@@ -3,8 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
-import hashlib
-import json
+
 from pathlib import Path
 from typing import Any
 
@@ -87,11 +86,11 @@ class ActivityDaemon:
         self.classifier = EventClassifier(self.client, self.debug)
         self.command_runner = CommandRunner(self.debug)
         self.provider = GnomeProvider()
-        self.decision_cache: dict[str, ClassificationResult] = {}
         self._debounce_task: asyncio.Task | None = None
         self._pending_snapshot: ProviderSnapshot | None = None
         self._debounce_lock = asyncio.Lock()
         self._sync_task: asyncio.Task | None = None
+        self._periodic_task: asyncio.Task | None = None
         self.runtime = self._load_runtime_state()
         self._refresh_lock = asyncio.Lock()
         self.dbus_service = DaemonDBusService(
@@ -148,7 +147,7 @@ class ActivityDaemon:
             self.config = config
             self.runtime.catalog = catalog
             self.runtime.catalog_hash = catalog.fingerprint()
-            self.decision_cache.clear()
+            self.classifier.clear_cache()
             message = describe_catalog_reload(
                 previous_paths,
                 catalog.allowed_paths(),
@@ -184,6 +183,7 @@ class ActivityDaemon:
             await self._publish_paused()
         if self.config.sync.command:
             self._sync_task = asyncio.create_task(self._sync_loop())
+        self._periodic_task = asyncio.create_task(self._periodic_reclassify_loop())
         await self._provider_loop()
 
     async def _provider_loop(self) -> None:
@@ -194,6 +194,13 @@ class ActivityDaemon:
                 self.debug.log("provider_disconnected", error=str(exc))
                 await self._publish_disconnected(reason=str(exc))
                 await asyncio.sleep(1)
+
+    async def _periodic_reclassify_loop(self) -> None:
+        while True:
+            await asyncio.sleep(30)
+            if self.runtime.tracking_enabled and self.runtime.last_snapshot is not None:
+                self.classifier.clear_cache()
+                await self._process_snapshot(self.runtime.last_snapshot)
 
     async def _sync_loop(self) -> None:
         command = self.config.sync.command
@@ -248,38 +255,22 @@ class ActivityDaemon:
         self.runtime.last_snapshot = snapshot
         state = snapshot.state
         previous_result = self._current_result()
-        cache_key = self._decision_key(snapshot, previous_result)
-        result = self.decision_cache.get(cache_key)
         self.debug.log(
             "provider_state",
             previous_result=previous_result.model_dump(mode="json")
             if previous_result is not None
             else None,
-            cache_key=cache_key,
             revision=snapshot.revision,
             state=state.model_dump(mode="json", exclude_none=True),
         )
-        if result is None:
-            screenshot_path = getattr(snapshot.state, 'screenshot_path', None) if snapshot.state else None
-            result = await self.classifier.classify(
-                self.config,
-                state,
-                self.runtime.catalog,
-                previous_result,
-                screenshot_path=screenshot_path,
-            )
-            self.decision_cache[cache_key] = result
-            self.debug.log(
-                "classifier_cache_store",
-                cache_key=cache_key,
-                selected=result.model_dump(mode="json"),
-            )
-        else:
-            self.debug.log(
-                "classifier_cache_hit",
-                cache_key=cache_key,
-                selected=result.model_dump(mode="json"),
-            )
+        screenshot_path = getattr(snapshot.state, "screenshot_path", None) if snapshot.state else None
+        result = await self.classifier.classify(
+            self.config,
+            state,
+            self.runtime.catalog,
+            previous_result,
+            screenshot_path=screenshot_path,
+        )
 
         result = self._apply_task_pin(result, state)
 
@@ -588,49 +579,6 @@ class ActivityDaemon:
             },
         )
 
-    def _decision_key(
-        self, snapshot: ProviderSnapshot, previous_result: ClassificationResult | None
-    ) -> str:
-        window = snapshot.state.focused_window
-        normalized = {
-            "title": window.title if window else "",
-            "wm_class": window.wm_class if window else "",
-            "wm_class_instance": window.wm_class_instance if window else None,
-            "workspace_name": window.workspace_name if window else None,
-            "active_workspace_name": snapshot.state.active_workspace_name,
-            "fullscreen": window.fullscreen if window else False,
-            "maximized": window.maximized if window else False,
-            "open_windows": [
-                {
-                    "title": open_window.title,
-                    "wm_class": open_window.wm_class,
-                    "wm_class_instance": open_window.wm_class_instance,
-                    "app_id": open_window.app_id,
-                    "workspace": open_window.workspace,
-                    "workspace_name": open_window.workspace_name,
-                    "z_order": open_window.z_order,
-                }
-                for open_window in sorted(
-                    snapshot.state.open_windows,
-                    key=lambda item: (
-                        item.z_order is None,
-                        item.z_order if item.z_order is not None else 9999,
-                        item.wm_class,
-                        item.title,
-                    ),
-                )
-                if open_window.title or open_window.wm_class
-            ],
-            "screen_locked": snapshot.state.screen_locked,
-            "idle_time_seconds": snapshot.state.idle_time_seconds,
-            "previous_result": previous_result.model_dump(mode="json")
-            if previous_result is not None
-            else None,
-            "catalog_hash": self.runtime.catalog_hash,
-        }
-        serialized = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
-
     async def _run_actions_for_result(
         self,
         result: ClassificationResult,
@@ -714,7 +662,7 @@ class ActivityDaemon:
         else:
             self.runtime.task_pins.pop(key, None)
         save_task_pins(self.paths.task_pins_json, self.runtime.task_pins)
-        self.decision_cache.clear()
+        self.classifier.clear_cache()
         self.debug.log("task_pin_updated", key=key, task_path=task_path or None)
         await self.handle_snapshot(snapshot)
         self._publish_ui_state()
