@@ -48,6 +48,13 @@ class ClassifierConfig(BaseModel):
     model: ModelConfig | None = None
 
 
+class ScreenshotConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    max_retention: int = 50
+
+
 class AppConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -60,6 +67,7 @@ class AppConfig(BaseModel):
     tools: ToolRegistry = Field(default_factory=ToolRegistry)
     idle_threshold_seconds: int = 60
     classify_idle: bool = True
+    screenshot: ScreenshotConfig = Field(default_factory=ScreenshotConfig)
 
     @model_validator(mode="after")
     def validate_config(self) -> "AppConfig":

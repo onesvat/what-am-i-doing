@@ -13,6 +13,7 @@ if str(SRC) not in sys.path:
 
 from waid.config import (
     AppConfig,
+    ScreenshotConfig,
     build_minimal_config,
     build_selection_catalog,
     load_config,
@@ -136,6 +137,29 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(2, config.version)
         self.assertEqual([], config.activities)
         self.assertEqual({}, config.tools.actions)
+
+    def test_screenshot_config_defaults(self) -> None:
+        config = AppConfig.model_validate(
+            {
+                "version": 2,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "classifier": {"instructions": ""},
+            }
+        )
+        self.assertTrue(config.screenshot.enabled)
+        self.assertEqual(50, config.screenshot.max_retention)
+
+    def test_screenshot_config_custom(self) -> None:
+        config = AppConfig.model_validate(
+            {
+                "version": 2,
+                "model": {"base_url": "http://localhost:11434/v1", "name": "g"},
+                "classifier": {"instructions": ""},
+                "screenshot": {"enabled": False, "max_retention": 10},
+            }
+        )
+        self.assertFalse(config.screenshot.enabled)
+        self.assertEqual(10, config.screenshot.max_retention)
 
     def test_builtin_activity_catalog_matches_expected_paths(self) -> None:
         self.assertEqual(

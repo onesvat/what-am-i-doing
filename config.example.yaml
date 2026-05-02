@@ -11,6 +11,10 @@ classifier:
   retry_count: 2
   instructions: ""
 
+screenshot:
+  enabled: true
+  max_retention: 50
+
 allow_activities:
   - browsing/social_media
   - browsing/shopping

@@ -142,6 +142,7 @@ class ProviderState(BaseModel):
     screen_locked: bool = False
     idle_time_seconds: float | None = None
     timestamp: datetime
+    screenshot_path: str | None = None
 
 
 @dataclass(slots=True)
