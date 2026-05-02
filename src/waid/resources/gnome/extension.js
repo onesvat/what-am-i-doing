@@ -4,6 +4,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Meta from 'gi://Meta';
+import Shell from 'gi://Shell';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 
@@ -30,6 +31,7 @@ const WAID_DIR = GLib.build_filenamev([GLib.get_home_dir(), '.waid']);
 const STATE_DIR = GLib.build_filenamev([WAID_DIR, 'state']);
 const STATUS_FILE = GLib.build_filenamev([STATE_DIR, 'status.json']);
 const CONFIG_FILE = GLib.build_filenamev([WAID_DIR, 'config.yaml']);
+const SCREENSHOTS_DIR = GLib.build_filenamev([WAID_DIR, 'screenshots']);
 const REPORT_INTERVAL_SECONDS = 30;
 
 const TRACKER_IFACE = `
@@ -86,6 +88,7 @@ export default class WaidExtension extends Extension {
         this._titleWatchSignalId = null;
         this._titleWatchWindow = null;
         this._trackingEnabled = true;
+        this._pendingScreenshotPath = null;
         this._updateTrackerSnapshot({emitSignal: false});
 
         this._dbusImpl = Gio.DBusExportedObject.wrapJSObject(TRACKER_IFACE, this);
@@ -518,7 +521,7 @@ export default class WaidExtension extends Extension {
             idleTimeMs = 0;
         }
 
-        return {
+return {
             focused_window: focused ? this._windowToJson(focused, 0) : null,
             open_windows: windows,
             active_workspace: activeWorkspace ? activeWorkspace.index() : null,
@@ -528,7 +531,8 @@ export default class WaidExtension extends Extension {
             workspace_count: global.workspace_manager.get_n_workspaces(),
             screen_locked: Main.screenShield ? Main.screenShield.locked : false,
             idle_time_seconds: idleTimeMs > 0 ? idleTimeMs / 1000 : 0,
-            timestamp: GLib.DateTime.new_now_utc().format('%Y-%m-%dT%H:%M:%SZ')
+            timestamp: GLib.DateTime.new_now_utc().format('%Y-%m-%dT%H:%M:%SZ'),
+            screenshot_path: this._pendingScreenshotPath
         };
     }
 
@@ -567,6 +571,21 @@ export default class WaidExtension extends Extension {
             ? win.is_override_redirect()
             : false;
         return skipTaskbar || overrideRedirect;
+    }
+
+    _captureScreenshot() {
+        try {
+            GLib.mkdir_with_parents(SCREENSHOTS_DIR, 0o755);
+            const now = new Date();
+            const ts = now.toISOString().replace(/[:.]/g, '-');
+            const filepath = GLib.build_filenamev([SCREENSHOTS_DIR, `${ts}.png`]);
+            const screenshot = Shell.Screenshot.new();
+            screenshot.screenshot(false, filepath, null);
+            return filepath;
+        } catch (e) {
+            logError(e, `${this.uuid}: screenshot capture failed`);
+            return null;
+        }
     }
 
     _safeCall(fn, fallback = null) {
@@ -650,10 +669,13 @@ export default class WaidExtension extends Extension {
         if (!this._enabled || !this._dbusImpl) {
             return;
         }
+        this._pendingScreenshotPath = this._captureScreenshot();
         try {
             this._updateTrackerSnapshot({emitSignal: true});
         } catch (error) {
             logError(error, `${this.uuid}: failed to emit state change`);
+        } finally {
+            this._pendingScreenshotPath = null;
         }
     }
 }
