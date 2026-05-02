@@ -85,6 +85,12 @@ class SelectionCatalog(BaseModel):
     def task_paths(self) -> set[str]:
         return {entry.path for entry in self.task_entries}
 
+    def task_path_to_id(self, path: str) -> str | None:
+        for entry in self.task_entries:
+            if entry.path == path and entry.id:
+                return entry.id
+        return None
+
     def entry_for_path(self, path: str) -> CatalogEntry:
         for entry in self.activity_entries + self.task_entries:
             if entry.path == path:
@@ -101,10 +107,11 @@ class SelectionCatalog(BaseModel):
         )
 
     def describe_tasks(self) -> str:
-        return "\n".join(
-            f"- {entry.path}: {entry.description or 'No description.'}"
-            for entry in self.task_entries
-        )
+        lines = []
+        for entry in self.task_entries:
+            id_part = f" (id={entry.id})" if entry.id else ""
+            lines.append(f"- {entry.path}{id_part}: {entry.description or 'No description.'}")
+        return "\n".join(lines)
 
     def fingerprint(self) -> str:
         payload = self.model_dump(mode="json", exclude_none=True)
