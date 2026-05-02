@@ -62,6 +62,8 @@ Important expectations:
 - `tools.context` outputs are interpolated into `generator.instructions`
 - `classifier.params` are interpolated into `classifier.instructions`
 - `tools.actions` is the only action registry the generated taxonomy may reference
+- `sync.command` runs on a timer to refresh `tasks.yaml`; `sync.interval_minutes` controls frequency
+- Task entries require an `id` field for stable span tracking
 
 Do not reintroduce old top-level sections like provider, state_dir, extension toggles, or separate model blocks unless there is a strong reason.
 
