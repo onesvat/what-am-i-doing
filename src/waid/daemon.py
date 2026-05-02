@@ -236,11 +236,13 @@ class ActivityDaemon:
             state=state.model_dump(mode="json", exclude_none=True),
         )
         if result is None:
+            screenshot_path = getattr(snapshot.state, 'screenshot_path', None) if snapshot.state else None
             result = await self.classifier.classify(
                 self.config,
                 state,
                 self.runtime.catalog,
                 previous_result,
+                screenshot_path=screenshot_path,
             )
             self.decision_cache[cache_key] = result
             self.debug.log(
@@ -256,6 +258,8 @@ class ActivityDaemon:
             )
 
         result = self._apply_task_pin(result, state)
+
+        self._cleanup_screenshots()
 
         if self._same_result(previous_result, result):
             self.debug.log("activity_unchanged", selected=result.model_dump(mode="json"))
@@ -524,6 +528,16 @@ class ActivityDaemon:
         )
         self.dbus_service.update_panel_state(self.runtime.panel_state)
 
+    def _cleanup_screenshots(self) -> None:
+        from .constants import SCREENSHOTS_DIR
+        if not SCREENSHOTS_DIR.exists():
+            return
+        max_retention = self.config.screenshot.max_retention
+        files = sorted(SCREENSHOTS_DIR.glob("*.png"), key=lambda p: p.stat().st_mtime)
+        if len(files) > max_retention:
+            for old_file in files[:-max_retention]:
+                old_file.unlink(missing_ok=True)
+
     def _log_raw_event(self, snapshot: ProviderSnapshot) -> None:
         window = snapshot.state.focused_window
         append_jsonl(
@@ -543,6 +557,7 @@ class ActivityDaemon:
                 "demands_attention": window.demands_attention if window else False,
                 "z_order": window.z_order if window else None,
                 "idle_time_seconds": snapshot.state.idle_time_seconds,
+                "screenshot_path": getattr(snapshot.state, 'screenshot_path', None),
             },
         )
 
