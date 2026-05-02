@@ -74,14 +74,9 @@ class StatusIndicator extends PanelMenu.Button {
 });
 
 export default class WaidExtension extends Extension {
-    enable() {
+enable() {
         this._enabled = true;
         this._signals = [];
-        this._daemonOnBus = false;
-        this._daemonWatchId = 0;
-        this._statusMonitor = null;
-        this._statusMonitorSignalId = 0;
-        this._reportSourceId = 0;
         this._currentStatus = null;
         this._trackerRevision = 0;
         this._trackerStateJson = '';
@@ -163,6 +158,8 @@ export default class WaidExtension extends Extension {
         }
     }
 
+    // --- Screenshot Allowlist for GNOME 49+ ---
+
     // --- Title change tracking for focused window ---
 
     _setupTitleWatcher() {
@@ -190,7 +187,7 @@ export default class WaidExtension extends Extension {
     _startPeriodicReporting() {
         this._reportSourceId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, REPORT_INTERVAL_SECONDS, () => {
             if (!this._enabled) return GLib.SOURCE_REMOVE;
-            this._emitStateChanged();
+            this._emitStateChanged(false);
             return GLib.SOURCE_CONTINUE;
         });
     }
@@ -573,17 +570,24 @@ return {
         return skipTaskbar || overrideRedirect;
     }
 
-    _captureScreenshot() {
+async _captureScreenshot() {
         try {
             GLib.mkdir_with_parents(SCREENSHOTS_DIR, 0o755);
             const now = new Date();
             const ts = now.toISOString().replace(/[:.]/g, '-');
             const filepath = GLib.build_filenamev([SCREENSHOTS_DIR, `${ts}.png`]);
+
             const screenshot = Shell.Screenshot.new();
-            screenshot.screenshot(false, filepath, null);
+            const file = Gio.File.new_for_path(filepath);
+            const outputStream = file.replace(null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null);
+
+            await screenshot.screenshot(false, outputStream);
+
+            outputStream.close(null);
+            log(`${this.uuid}: screenshot saved: ${filepath}`);
             return filepath;
         } catch (e) {
-            logError(e, `${this.uuid}: screenshot capture failed`);
+            logError(e, `${this.uuid}: screenshot failed`);
             return null;
         }
     }
@@ -665,11 +669,13 @@ return {
         }
     }
 
-    _emitStateChanged() {
+    async _emitStateChanged(captureScreenshot = true) {
         if (!this._enabled || !this._dbusImpl) {
             return;
         }
-        this._pendingScreenshotPath = this._captureScreenshot();
+        if (captureScreenshot) {
+            this._pendingScreenshotPath = await this._captureScreenshot();
+        }
         try {
             this._updateTrackerSnapshot({emitSignal: true});
         } catch (error) {

@@ -141,17 +141,8 @@ class EventClassifier:
             + "\n- null",
             "Activities:\n" + catalog.describe_activities(),
             "Tasks:\n" + (catalog.describe_tasks() if task_outputs else "- No tasks available."),
-            "Previous result:\n"
-            + (
-                json.dumps(previous_result.model_dump(mode="json"), sort_keys=True)
-                if previous_result is not None
-                else '{"activity_path":"unknown","task_path":null}'
-            ),
             "Current event:\n" + self._state_summary(state),
         ]
-        supporting_windows = self._supporting_windows_summary(state)
-        if supporting_windows:
-            sections.append("Supporting open windows:\n" + supporting_windows)
         rendered_instructions = config.render_classifier_instructions().strip()
         if rendered_instructions:
             sections.append("User instructions:\n" + rendered_instructions)

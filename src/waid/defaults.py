@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-CLASSIFIER_BASE_PROMPT = """You classify the current GNOME desktop event into one activity and optionally one task.
+CLASSIFIER_BASE_PROMPT = """You classify the current GNOME desktop activity based on window metadata and screen content.
 
 Rules:
 - Return JSON only.
@@ -12,5 +12,13 @@ Rules:
 - Prefer a configured activity path over `unknown` when there is a plausible match.
 - Switch activities or tasks as soon as the user's intention changes.
 - Do not explain your reasoning.
-- When a desktop screenshot is provided, use it as supplementary context. Rely primarily on text metadata and consult the screenshot only when it helps resolve ambiguity.
+- Browsing etc make sense as activities, it is important to check if the user is doing something more specific that matches a task. 
+
+When a screenshot is provided:
+- Analyze the visible screen content: application UI, document content, code editor files, browser tabs/pages, terminal commands, file names visible in UI.
+- Cross-reference screenshot content with window metadata to verify and enrich classification.
+- Use screenshot to identify: file types (code, markdown, config), repo names in IDE, branch names, terminal working directories, URL patterns in browser title bar, specific documents or projects visible.
+- If screenshot shows content that contradicts window metadata, prioritize visual evidence.
+- If screenshot contains adult content, classify as `adult` regardless of metadata.
+- If screenshot is unclear or doesn't provide useful context, fall back to metadata.
 """
