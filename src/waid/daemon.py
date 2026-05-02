@@ -40,6 +40,7 @@ from .models import (
     ToolCall,
     UIStateRecord,
     utcnow,
+    window_signature,
 )
 from .providers import GnomeProvider
 from .storage import (
@@ -69,6 +70,7 @@ class RuntimeState:
     last_snapshot: ProviderSnapshot | None
     tracking_enabled: bool
     task_pins: dict[str, str]
+    last_window_signature: str
 
 
 class ActivityDaemon:
@@ -127,6 +129,7 @@ class ActivityDaemon:
             last_snapshot=None,
             tracking_enabled=load_tracking(self.paths.tracking_json),
             task_pins=load_task_pins(self.paths.task_pins_json),
+            last_window_signature="",
         )
 
     async def reload_config(self) -> RefreshResult:
@@ -226,6 +229,10 @@ class ActivityDaemon:
     async def handle_snapshot(self, snapshot: ProviderSnapshot) -> None:
         if not self.runtime.tracking_enabled:
             return
+        sig = window_signature(snapshot.state)
+        if sig == self.runtime.last_window_signature:
+            return
+        self.runtime.last_window_signature = sig
         self._log_raw_event(snapshot)
         async with self._debounce_lock:
             self._pending_snapshot = snapshot

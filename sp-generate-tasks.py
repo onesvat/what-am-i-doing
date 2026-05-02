@@ -16,7 +16,6 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from waid.config import default_config_path, default_tasks_path, load_config
-from waid.llm import OpenAICompatibleClient
 
 import yaml
 
@@ -55,7 +54,7 @@ def main() -> int:
         tasks = load_sp_tasks(sp_binary)
         projects = load_sp_projects(sp_binary)
         project_map = {p["id"]: p["title"] for p in projects}
-        generated = build_task_entries(tasks, project_map=project_map, config=config)
+        generated = build_task_entries(tasks, project_map=project_map)
         content = yaml.safe_dump(generated, sort_keys=False, allow_unicode=True)
         changed = write_if_changed(output_path, content)
     except Exception as exc:
@@ -107,8 +106,7 @@ def load_sp_projects(sp_binary: str) -> list[dict]:
     return []
 
 
-def build_task_entries(tasks: list[dict], *, project_map: dict[str, str], config) -> list[dict]:
-    llm = OpenAICompatibleClient()
+def build_task_entries(tasks: list[dict], *, project_map: dict[str, str]) -> list[dict]:
     used_paths: set[str] = set()
     entries: list[dict] = []
     for task in tasks:
@@ -128,34 +126,25 @@ def build_task_entries(tasks: list[dict], *, project_map: dict[str, str], config
             {
                 "id": task_id,
                 "path": path,
-                "description": describe_task(task, project_name=project_name, config=config, llm=llm),
+                "description": describe_task(task, project_name=project_name),
                 "icon": "folder-symbolic",
             }
         )
     return entries
 
 
-def describe_task(task: dict, *, project_name: str, config, llm: OpenAICompatibleClient) -> str:
+def describe_task(task: dict, *, project_name: str) -> str:
     title = str(task.get("title", "")).strip()
     notes = str(task.get("notes", "")).strip()
-    prompt = [
-        "Write one short description (1-2 sentences) for a desktop activity classifier.",
-        "The classifier matches this task against live window titles, app names, URLs, file paths, chat threads, repo names, and document names.",
-        "List the concrete, distinctive signals that indicate the user is actively working on this task: specific app or site names, repo or project names, file types, URL fragments, chat partners, keywords likely to appear in window titles. Be specific, not generic.",
-        "Avoid vague phrases like 'reviewing', 'managing', 'working on' without any specific anchor.",
-        "Do not mention Super Productivity, IDs, or formatting instructions.",
-        f"Task title: {title}",
-    ]
-    if project_name:
-        prompt.append(f"Project: {project_name}")
+    parts: list[str] = []
+    if project_name and project_name.lower() != "inbox":
+        parts.append(f"Project: {project_name}")
+    if title:
+        parts.append(f"Task: {title}")
     if notes:
-        prompt.append(f"Notes: {notes}")
-    response = llm.chat(
-        config.classifier_model,
-        [{"role": "user", "content": "\n".join(prompt)}],
-        max_tokens=120,
-    )
-    return response.strip().replace("\n", " ")
+        single_line_notes = " ".join(line.strip() for line in notes.splitlines() if line.strip())
+        parts.append(f"Notes: {single_line_notes}")
+    return " | ".join(parts)
 
 
 def slugify(value: str) -> str:

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
-from base64 import b64encode
 
 from pathlib import Path
 
@@ -16,6 +16,7 @@ from .models import (
     ProviderState,
     SelectionCatalog,
     WindowInfo,
+    window_signature,
 )
 
 
@@ -27,6 +28,7 @@ class EventClassifier:
         self.debug = debug
         self._last_prompt_hash: str | None = None
         self._last_result: ClassificationResult | None = None
+        self._last_window_key: str | None = None
 
     def clear_cache(self) -> None:
         self._last_prompt_hash = None
@@ -44,6 +46,10 @@ class EventClassifier:
             if state.idle_time_seconds >= config.idle_threshold_seconds:
                 return ClassificationResult(activity_path="idle", task_path=None)
 
+        current_window_key = window_signature(state)
+        window_changed = current_window_key != self._last_window_key
+        self._last_window_key = current_window_key
+
         activity_outputs = sorted(catalog.activity_paths())
         task_outputs = sorted(catalog.task_paths())
         if not activity_outputs:
@@ -59,11 +65,10 @@ class EventClassifier:
         )
         base_messages = self._build_messages(config, base_prompt, screenshot_path)
         prompt_hash = hashlib.sha256(
-            json.dumps(base_messages, sort_keys=True, separators=(",", ":")).encode(
-                "utf-8"
-            )
+            json.dumps(base_messages, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
-        if prompt_hash == self._last_prompt_hash and self._last_result is not None:
+
+        if not window_changed and prompt_hash == self._last_prompt_hash and self._last_result is not None:
             if self.debug is not None:
                 self.debug.log("classifier_prompt_cache_hit", prompt_hash=prompt_hash)
             return self._last_result
@@ -160,7 +165,6 @@ class EventClassifier:
             + ("\n".join(f"- {path}" for path in task_outputs) if task_outputs else "- null")
             + "\n- null",
             "Activities:\n" + catalog.describe_activities(),
-            "Tasks:\n" + (catalog.describe_tasks() if task_outputs else "- No tasks available."),
             "Current event:\n" + self._state_summary(state),
         ]
         rendered_instructions = config.render_classifier_instructions().strip()
@@ -178,10 +182,10 @@ class EventClassifier:
             path = Path(screenshot_path)
             if path.exists():
                 try:
-                    image_base64 = b64encode(path.read_bytes()).decode("ascii")
-                except OSError:
-                    return [{"role": "user", "content": prompt}]
-                return [build_vision_message(prompt, image_base64)]
+                    image_data = base64.b64encode(path.read_bytes()).decode("utf-8")
+                    return [build_vision_message(prompt, image_data)]
+                except Exception:
+                    pass
         return [{"role": "user", "content": prompt}]
 
     def _state_summary(self, state: ProviderState) -> str:

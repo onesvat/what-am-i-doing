@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
+import re
 import json
 from pathlib import Path
 from typing import Any, Literal
@@ -431,3 +432,15 @@ class AppPaths:
 
 def utcnow() -> datetime:
     return datetime.now(tz=UTC)
+
+
+_NOISE_RE = re.compile(r"[^\w\s]", re.UNICODE)
+
+
+def window_signature(state: ProviderState) -> str:
+    """Noise-stable key for a window state — strips punctuation/symbols from title."""
+    window = state.focused_window
+    if window is None:
+        return ""
+    normalized = _NOISE_RE.sub("", window.title or "").strip()
+    return f"{window.wm_class}\x1f{normalized}"

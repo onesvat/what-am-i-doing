@@ -78,6 +78,7 @@ waid service install --now
 waid status
 waid refresh
 waid stats
+waid timeline
 waid service status
 waid service logs
 waid tracking pause
@@ -170,6 +171,7 @@ Inside `~/.waid/`:
 
 - `state/raw-events.jsonl` records raw GNOME window events
 - `state/activity.jsonl` records activity and task changes
+- `waid timeline` reads `state/activity.jsonl` and shows time-bounded activity segments (`today`, `week`, `month`, `all`)
 - `state/status.json` stores the current UI payload used by the extension
 - `state/spans.jsonl` stores closed spans for stats
 - `state/tracking.json` stores paused/resumed state

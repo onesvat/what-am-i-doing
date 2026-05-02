@@ -78,6 +78,16 @@ def build_parser() -> argparse.ArgumentParser:
         default="today",
         help="Time period to show (default: today)",
     )
+    timeline_parser = subparsers.add_parser("timeline")
+    timeline_parser.add_argument(
+        "--json", action="store_true", help="Print machine-readable JSON"
+    )
+    timeline_parser.add_argument(
+        "--period",
+        choices=["today", "week", "month", "all"],
+        default="today",
+        help="Time period to show (default: today)",
+    )
 
     config_parser = subparsers.add_parser("config")
     config_sub = config_parser.add_subparsers(dest="config_command", required=True)
@@ -229,6 +239,81 @@ def _stats_payload(period: str) -> dict[str, Any]:
     return {"period": period, "by_top": by_top, "by_path": by_path, "by_task": by_task}
 
 
+def _window_start_for_period(period: str, now: datetime) -> datetime | None:
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return {
+        "today": day_start,
+        "week": day_start - timedelta(days=day_start.weekday()),
+        "month": day_start.replace(day=1),
+        "all": None,
+    }[period]
+
+
+def _load_activity_events(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    events: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            raw = line.strip()
+            if not raw:
+                continue
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if payload.get("event") != "activity_change":
+                continue
+            ts_raw = payload.get("ts")
+            if not isinstance(ts_raw, str):
+                continue
+            try:
+                ts = datetime.fromisoformat(ts_raw)
+            except ValueError:
+                continue
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=UTC)
+            events.append({"ts": ts, "payload": payload})
+    events.sort(key=lambda item: item["ts"])
+    return events
+
+
+def _timeline_payload(period: str) -> dict[str, Any]:
+    now = datetime.now(tz=UTC)
+    window_start = _window_start_for_period(period, now)
+    events = _load_activity_events(AppPaths.default().activity_log)
+    rows: list[dict[str, Any]] = []
+    for idx, current in enumerate(events):
+        start = current["ts"]
+        if window_start is not None and start < window_start:
+            continue
+        end = events[idx + 1]["ts"] if idx + 1 < len(events) else now
+        payload: dict[str, Any] = current["payload"]
+        kind = str(payload.get("kind") or "unknown")
+        activity_path = payload.get("activity_path")
+        task_path = payload.get("task_path")
+        wm_class = payload.get("wm_class")
+        title = payload.get("title")
+        rows.append(
+            {
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "kind": kind,
+                "activity_path": activity_path if isinstance(activity_path, str) else None,
+                "task_path": task_path if isinstance(task_path, str) else None,
+                "wm_class": wm_class if isinstance(wm_class, str) else "",
+                "title": title if isinstance(title, str) else "",
+                "activity_or_kind": (
+                    activity_path if isinstance(activity_path, str) and activity_path else kind
+                ),
+                "task_or_dash": task_path if isinstance(task_path, str) and task_path else "-",
+            }
+        )
+    return {"period": period, "rows": rows}
+
+
 def _run_stats(json_output: bool, period: str) -> None:
     payload = _stats_payload(period)
     if json_output:
@@ -267,6 +352,19 @@ def _run_stats(json_output: bool, period: str) -> None:
         print("\nSP Tasks")
         for task, secs in sorted(by_task.items(), key=lambda x: x[1], reverse=True):
             print(f"  {task:<{col_width - 2}}{_format_duration(secs):>6}")
+
+
+def _run_timeline(json_output: bool, period: str) -> None:
+    payload = _timeline_payload(period)
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    for row in payload["rows"]:
+        start = datetime.fromisoformat(row["start"]).astimezone().strftime("%H:%M:%S")
+        end = datetime.fromisoformat(row["end"]).astimezone().strftime("%H:%M:%S")
+        print(
+            f"{start} - {end}  {row['activity_or_kind']}  {row['task_or_dash']}  {row['wm_class']}  {row['title']}"
+        )
 
 
 def _initial_config_comments() -> str:
@@ -458,6 +556,9 @@ def main() -> None:
         return
     if args.command == "stats":
         _run_stats(args.json, args.period)
+        return
+    if args.command == "timeline":
+        _run_timeline(args.json, args.period)
         return
     if args.command == "config":
         _run_config_command(args)
